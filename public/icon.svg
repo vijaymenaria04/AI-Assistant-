@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FACC15"/>
+      <stop offset="50%" stop-color="#EAB308"/>
+      <stop offset="100%" stop-color="#CA8A04"/>
+    </linearGradient>
+    <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="none" stroke="url(#goldGrad)" stroke-width="4" stroke-opacity="0.3"/>
+  <!-- Central AI Orb ring -->
+  <circle cx="256" cy="230" r="90" fill="none" stroke="url(#goldGrad)" stroke-width="14" filter="url(#goldGlow)"/>
+  <circle cx="256" cy="230" r="50" fill="url(#goldGrad)" opacity="0.9"/>
+  <!-- AI Sparkles -->
+  <path d="M256 90 L266 125 L301 135 L266 145 L256 180 L246 145 L211 135 L246 125 Z" fill="url(#goldGrad)"/>
+  <!-- Business & Android Iconography -->
+  <text x="256" y="390" font-family="system-ui, -apple-system, sans-serif" font-size="44" font-weight="900" fill="url(#goldGrad)" text-anchor="middle" letter-spacing="2">GOPAL AI</text>
+  <text x="256" y="435" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600" fill="#94A3B8" text-anchor="middle" letter-spacing="1">ANDROID PERSONAL AGENT</text>
+</svg>

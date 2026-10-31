@@ -1,0 +1,6 @@
+{
+  "name": "GopalAI Assistant",
+  "description": "Complete Android Personal AI Agent & Business Management System for Jain Sweets, Paan Bai Canteen, Kesarwadi Canteen and Personal Finance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

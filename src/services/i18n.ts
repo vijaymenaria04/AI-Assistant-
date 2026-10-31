@@ -1,0 +1,506 @@
+import { useState, useEffect } from 'react';
+
+export type Language = 'en' | 'hi';
+
+export const translations = {
+  en: {
+    // Header & Status
+    appName: 'GopalAI Assistant',
+    ownerAccess: 'Owner Access • Android System',
+    online: 'Online',
+    offline: 'Offline Mode',
+
+    // Navigation & Tabs
+    home: 'Home',
+    sales: 'Sales',
+    stock: 'Stock',
+    aiVoice: 'AI Voice',
+    tasks: 'Tasks',
+    reports: 'Reports',
+    expenses: 'Expenses',
+    purchases: 'Purchases',
+    inventory: 'Inventory',
+    suppliers: 'Suppliers',
+    payments: 'Payments',
+    staff: 'Staff',
+    personal: 'Personal',
+    notifications: 'Alerts',
+    settings: 'Settings',
+    backup: 'Backup',
+    combined: 'Combined Report',
+    jainSweets: 'Jain Sweets',
+    paanBai: 'Paan Bai Canteen',
+    kesarwadi: 'Kesarwadi Canteen',
+    gopalCaterers: 'Gopal Caterers',
+
+    // Home Dashboard
+    aiCommandAgent: 'GopalAI Voice Command Agent',
+    controlWithVoice: 'Control with Voice Commands',
+    speakHint: 'Speak in Hindi or English to add sales, expenses, or call contacts.',
+    launchVoice: 'Launch AI Voice',
+    totalSales: 'Total Sales',
+    totalExpenses: 'Total Expenses',
+    stockPurchases: 'Stock Purchases',
+    pendingPayables: 'Pending Payables',
+    quickActions: 'Quick Actions',
+    addSale: 'Add Sale',
+    addExpense: 'Add Expense',
+    viewStock: 'Stock Inventory',
+    viewReports: 'View Reports',
+    aiInsights: 'Real-time AI Business Insights',
+    recentActivity: 'Recent Activity',
+    viewAll: 'View All',
+    noTransactionsYet: 'No transactions recorded yet',
+    noTransactionsHint: 'Record sales via voice command or click Add Sale above.',
+    recordBill: 'Record bill',
+    recordCosts: 'Record costs',
+    dailyMonthly: 'Daily & Monthly',
+    transactions: 'transactions',
+    entries: 'entries',
+    receipts: 'receipts',
+    supplierDues: 'Supplier dues',
+
+    // Sales View
+    salesManagement: 'Sales Management',
+    recordSaleBtn: 'Record Sale',
+    totalSalesPeriod: 'Total Sales',
+    recordNewSale: 'Record New Sale Transaction',
+    totalAmountRupees: 'Total Amount (₹)',
+    paymentMethod: 'Payment Method',
+    productNameOptional: 'Product Item Name (Optional)',
+    customerNameOptional: 'Customer Name (Optional)',
+    cancel: 'Cancel',
+    saveSaleRecord: 'Save Sale Record',
+    all: 'All',
+    today: 'Today',
+    month: 'Month',
+    cash: 'Cash',
+    upi: 'UPI / GPay / PhonePe',
+    onlineCard: 'Online / Card',
+    creditUdhar: 'Credit / Udhar',
+
+    // Expenses View
+    expenseManagement: 'Expense Management',
+    operatingCosts: 'Operating Costs',
+    recordExpenseBtn: 'Record Expense',
+    totalExpensesRecorded: 'Total Recorded Expenses',
+    recordNewExpense: 'Record New Expense',
+    amountRupees: 'Amount (₹)',
+    category: 'Category',
+    notesDescription: 'Notes / Description',
+    saveExpense: 'Save Expense',
+    rawMaterials: 'Raw Materials',
+    electricity: 'Electricity',
+    rent: 'Rent',
+    staffSalary: 'Staff Salary',
+    transportation: 'Transportation',
+    packaging: 'Packaging',
+    maintenance: 'Maintenance',
+    otherExpenses: 'Other Expenses',
+
+    // Purchases View
+    stockPurchasesInward: 'Stock Purchases & Inward',
+    goodsPurchased: 'Goods Purchased',
+    recordPurchaseBtn: 'Record Purchase',
+    totalPurchaseAmount: 'Total Purchase Amount',
+    recordStockPurchase: 'Record Stock Purchase Entry',
+    itemName: 'Item Name',
+    quantity: 'Quantity',
+    unit: 'Unit',
+    supplierName: 'Supplier Name',
+    paidAmountRupees: 'Paid Amount (₹)',
+    savePurchaseStock: 'Save Purchase & Stock',
+    noPurchasesYet: 'No purchase records available',
+
+    // Inventory & Stock View
+    inventoryStockTitle: 'Inventory & Stock Tracking',
+    addStockItemBtn: 'Add Stock Item',
+    reorderAlert: 'Low Stock Reorder Alert!',
+    addInventoryRecord: 'Add New Inventory Stock Record',
+    currentStockQty: 'Current Stock Quantity',
+    reorderLevelAlert: 'Reorder Level Alert',
+    expiryDateOptional: 'Expiry Date (Optional)',
+    saveStockItem: 'Save Stock Item',
+    noInventoryAdded: 'No inventory items added',
+    lowStockTag: 'Low Stock',
+
+    // Suppliers View
+    supplierAccountsPayables: 'Supplier Accounts & Payables',
+    vendorLedger: 'Vendor Ledger',
+    addSupplierBtn: 'Add Supplier',
+    totalOutstandingPayables: 'Total Outstanding Payables',
+    addSupplierAccount: 'Add New Supplier Account',
+    supplierFirmName: 'Supplier / Firm Name',
+    phoneContact: 'Phone Contact Number',
+    saveSupplier: 'Save Supplier',
+    paySupplier: 'Pay Supplier',
+    outstandingDue: 'Outstanding Due:',
+    confirmPayment: 'Confirm Payment',
+    payNow: 'Pay Now',
+    noSuppliersYet: 'No supplier records available',
+
+    // Payments View
+    creditLedgerReceivables: 'Credit Ledger & Receivables',
+    customerCreditRecords: 'Customer Credit Records',
+    addCustomerCreditBtn: 'Add Customer Credit',
+    uncollectedCredit: 'Total Uncollected Credit (Receivables)',
+    addCustomerCreditEntry: 'Add Customer Credit Entry',
+    saveCustomerCredit: 'Save Customer Credit',
+    noCreditRecords: 'No credit records recorded',
+
+    // Staff View
+    staffAttendanceTitle: 'Staff & Attendance Management',
+    teamPayroll: 'Team & Payroll',
+    addStaffProfileBtn: 'Add Staff Profile',
+    registerNewStaff: 'Register New Staff Member',
+    fullName: 'Full Name',
+    roleDesignation: 'Role / Designation',
+    salaryAmount: 'Salary Amount (₹)',
+    salaryCycle: 'Salary Cycle',
+    saveStaffMember: 'Save Staff Member',
+    present: 'Present',
+    absent: 'Absent',
+    monthly: 'Monthly',
+    dailyWager: 'Daily Wager',
+    noStaffRegistered: 'No staff members registered',
+
+    // Personal Finance View
+    personalFinanceTitle: 'Personal Finance & Wallet',
+    ownerPrivateAccounting: 'Owner Private Accounting',
+    addTransactionBtn: 'Add Transaction',
+    totalIncome: 'Total Income',
+    totalExpense: 'Total Expense',
+    netPersonalBalance: 'Net Personal Balance',
+    recordPersonalTx: 'Record Personal Transaction',
+    type: 'Type',
+    income: 'Income (+)',
+    expenseType: 'Expense (-)',
+    categoryNotes: 'Category / Notes',
+    saveTransaction: 'Save Transaction',
+    noPersonalTxYet: 'No personal transactions recorded',
+
+    // Tasks & Reminders View
+    tasksRemindersNotesTitle: 'Tasks, Reminders & Notes',
+    personalAutomation: 'Personal Automation & Reminders',
+    addTask: 'Add Task',
+    setReminder: 'Set Reminder',
+    saveNote: 'Save Note',
+    reminderTitle: 'Reminder Title',
+    noActiveTasks: 'No active tasks. Add one above.',
+    noReminders: 'No scheduled reminders.',
+    noNotes: 'No saved notes.',
+
+    // Reports View
+    reportsTitle: 'Business Reports & Statements',
+    consolidatedData: 'Consolidated Operational Financial Data',
+    exportCsvReport: 'Export CSV Report',
+    combinedReportBtn: 'Combined 3-Business Operations',
+    individualBreakdown: 'Individual Business Accounts Breakdown',
+    businessName: 'Business',
+
+    // AI Assistant View
+    aiCommandCenter: 'AI Command Center',
+    commandHistoryLog: 'Command History Log',
+    typeHinglishCommand: 'Type command in Hindi or English...',
+    noHistoryYet: 'No command history yet. Speak or type commands above!',
+
+    // Settings View
+    settingsTitle: 'Settings & Privacy',
+    preferencesSecurity: 'Preferences, PIN Security & App Controls',
+    appearanceTheme: 'Appearance Theme',
+    toggleThemeBtn: 'Toggle Theme',
+    changePin: 'Change 4-Digit Owner Security PIN',
+    updatePinBtn: 'Update PIN',
+    pinUpdatedSuccess: 'PIN updated successfully!',
+    resetDatabaseTitle: 'Reset Database to Zero State',
+    resetDatabaseDesc: 'Deletes all saved sales, expenses, inventory, and suppliers. Returns to strict zero state.',
+    clearAllRecordsBtn: 'Clear All Database Records',
+
+    // Voice Modal
+    voiceAgentTitle: 'GopalAI Voice Agent',
+    tapToSpeak: 'Tap to Speak',
+    listening: 'Listening...',
+    speaking: 'Speaking...',
+    continuousListening: 'Continuous Background Listening',
+    active: 'Active',
+    off: 'Off',
+    aiResponseLabel: 'AI Response:',
+
+    // Backup & APK Modal
+    appBackupTitle: 'Free Android App & Storage',
+    offlinePwaDesc: 'GopalAI Assistant runs as a full offline-capable Android Progressive Web App (PWA). You can install it on your mobile home screen.',
+    exportBackupBtn: 'Export Backup',
+    restoreDataBtn: 'Restore Data',
+    backupSuccessMsg: 'Backup exported successfully to JSON!',
+    gotIt: 'Got it'
+  },
+  hi: {
+    // Header & Status
+    appName: 'गोपाल AI असिस्टेंट',
+    ownerAccess: 'मालिक एक्सेस • एंड्रॉइड सिस्टम',
+    online: 'ऑनलाइन',
+    offline: 'ऑफ़लाइन मोड',
+
+    // Navigation & Tabs
+    home: 'होम',
+    sales: 'बिक्री (Sales)',
+    stock: 'स्टॉक (Stock)',
+    aiVoice: 'AI वॉयस',
+    tasks: 'कार्य (Tasks)',
+    reports: 'रिपोर्ट्स',
+    expenses: 'खर्चे (Expenses)',
+    purchases: 'खरीद (Purchases)',
+    inventory: 'इन्वेंट्री',
+    suppliers: 'सप्लायर्स',
+    payments: 'भुगतान',
+    staff: 'स्टाफ',
+    personal: 'व्यक्तिगत',
+    notifications: 'अलर्ट',
+    settings: 'सेटिंग्स',
+    backup: 'बैकअप',
+    combined: 'संयुक्त रिपोर्ट',
+    jainSweets: 'जैन स्वीट्स',
+    paanBai: 'पान बाई कैंटीन',
+    kesarwadi: 'केसरवाड़ी कैंटीन',
+    gopalCaterers: 'गोपाल कैटरर्स',
+
+    // Home Dashboard
+    aiCommandAgent: 'गोपाल AI वॉयस कमांड एजेंट',
+    controlWithVoice: 'वॉयस कमांड से नियंत्रित करें',
+    speakHint: 'बिक्री, खर्चे जोड़ने या कॉल करने के लिए हिंदी/अंग्रेजी में बोलें।',
+    launchVoice: 'AI वॉयस चालू करें',
+    totalSales: 'कुल बिक्री (Sales)',
+    totalExpenses: 'कुल खर्चे (Expenses)',
+    stockPurchases: 'स्टॉक खरीद',
+    pendingPayables: 'बकाया भुगतान',
+    quickActions: 'त्वरित कार्य',
+    addSale: 'बिक्री जोड़ें',
+    addExpense: 'खर्चा जोड़ें',
+    viewStock: 'स्टॉक इन्वेंट्री',
+    viewReports: 'रिपोर्ट देखें',
+    aiInsights: 'रियल-टाइम AI व्यापार सुझाव',
+    recentActivity: 'हाल की गतिविधियां',
+    viewAll: 'सभी देखें',
+    noTransactionsYet: 'अभी तक कोई लेनदेन रिकॉर्ड नहीं हुआ है',
+    noTransactionsHint: 'वॉयस कमांड से बिक्री दर्ज करें या ऊपर बिक्री जोड़ें बटन दबाएं।',
+    recordBill: 'बिल दर्ज करें',
+    recordCosts: 'लागत दर्ज करें',
+    dailyMonthly: 'दैनिक एवं मासिक',
+    transactions: 'लेनदेन',
+    entries: 'एंट्री',
+    receipts: 'रसीदें',
+    supplierDues: 'सप्लायर बकाया',
+
+    // Sales View
+    salesManagement: 'बिक्री प्रबंधन (Sales)',
+    recordSaleBtn: 'बिक्री दर्ज करें',
+    totalSalesPeriod: 'कुल बिक्री',
+    recordNewSale: 'नया बिक्री लेनदेन दर्ज करें',
+    totalAmountRupees: 'कुल राशि (₹)',
+    paymentMethod: 'भुगतान का तरीका',
+    productNameOptional: 'सामग्री / प्रोडक्ट का नाम (ऐच्छिक)',
+    customerNameOptional: 'ग्राहक का नाम (ऐच्छिक)',
+    cancel: 'रद्द करें',
+    saveSaleRecord: 'बिक्री रिकॉर्ड सुरक्षित करें',
+    all: 'सभी',
+    today: 'आज',
+    month: 'इस महीने',
+    cash: 'नकद (Cash)',
+    upi: 'UPI / जीपे / फोनपे',
+    onlineCard: 'ऑनलाइन / कार्ड',
+    creditUdhar: 'उधार (Credit)',
+
+    // Expenses View
+    expenseManagement: 'खर्चा प्रबंधन (Expenses)',
+    operatingCosts: 'ऑपरेटिंग खर्चे',
+    recordExpenseBtn: 'खर्चा दर्ज करें',
+    totalExpensesRecorded: 'कुल दर्ज खर्चे',
+    recordNewExpense: 'नया खर्चा दर्ज करें',
+    amountRupees: 'राशि (₹)',
+    category: 'श्रेणी (Category)',
+    notesDescription: 'विवरण / नोट्स',
+    saveExpense: 'खर्चा सुरक्षित करें',
+    rawMaterials: 'कच्चा माल (Raw Material)',
+    electricity: 'बिजली बिल',
+    rent: 'किराया (Rent)',
+    staffSalary: 'स्टाफ वेतन',
+    transportation: 'परिवहन (Transportation)',
+    packaging: 'पैकिंग खर्चा',
+    maintenance: 'रखरखाव (Maintenance)',
+    otherExpenses: 'अन्य खर्चे',
+
+    // Purchases View
+    stockPurchasesInward: 'स्टॉक खरीद एवं इनवर्ड',
+    goodsPurchased: 'खरीदी गई सामग्री',
+    recordPurchaseBtn: 'खरीद दर्ज करें',
+    totalPurchaseAmount: 'कुल खरीद राशि',
+    recordStockPurchase: 'स्टॉक खरीद एंट्री दर्ज करें',
+    itemName: 'सामग्री का नाम',
+    quantity: 'मात्रा (Quantity)',
+    unit: 'इकाई (Unit)',
+    supplierName: 'सप्लायर का नाम',
+    paidAmountRupees: 'भुगतान की गई राशि (₹)',
+    savePurchaseStock: 'खरीद एवं स्टॉक सुरक्षित करें',
+    noPurchasesYet: 'कोई खरीद रिकॉर्ड उपलब्ध नहीं है',
+
+    // Inventory & Stock View
+    inventoryStockTitle: 'इन्वेंट्री एवं स्टॉक ट्रैकिंग',
+    addStockItemBtn: 'नया स्टॉक जोड़ें',
+    reorderAlert: 'कम स्टॉक रीऑर्डर अलर्ट!',
+    addInventoryRecord: 'नया स्टॉक रिकॉर्ड जोड़ें',
+    currentStockQty: 'वर्तमान स्टॉक मात्रा',
+    reorderLevelAlert: 'रीऑर्डर अलर्ट स्तर',
+    expiryDateOptional: 'समाप्ति तिथि (ऐच्छिक)',
+    saveStockItem: 'स्टॉक सुरक्षित करें',
+    noInventoryAdded: 'कोई स्टॉक आइटम नहीं जोड़ा गया',
+    lowStockTag: 'कम स्टॉक',
+
+    // Suppliers View
+    supplierAccountsPayables: 'सप्लायर खाते एवं देय राशि',
+    vendorLedger: 'वेंडर लेजर',
+    addSupplierBtn: 'सप्लायर जोड़ें',
+    totalOutstandingPayables: 'कुल बकाया भुगतान (Payable)',
+    addSupplierAccount: 'नया सप्लायर खाता जोड़ें',
+    supplierFirmName: 'सप्लायर / फर्म का नाम',
+    phoneContact: 'फोन नंबर',
+    saveSupplier: 'सप्लायर सुरक्षित करें',
+    paySupplier: 'सप्लायर को भुगतान करें',
+    outstandingDue: 'बकाया राशि:',
+    confirmPayment: 'भुगतान की पुष्टि करें',
+    payNow: 'अभी भुगतान करें',
+    noSuppliersYet: 'कोई सप्लायर रिकॉर्ड उपलब्ध नहीं है',
+
+    // Payments View
+    creditLedgerReceivables: 'क्रेडिट लेजर एवं प्राप्य राशि',
+    customerCreditRecords: 'ग्राहक उधार रिकॉर्ड',
+    addCustomerCreditBtn: 'ग्राहक उधार जोड़ें',
+    uncollectedCredit: 'कुल बकाया ग्राहक उधार (Receivables)',
+    addCustomerCreditEntry: 'ग्राहक उधार एंट्री जोड़ें',
+    saveCustomerCredit: 'ग्राहक उधार सुरक्षित करें',
+    noCreditRecords: 'कोई उधार रिकॉर्ड नहीं है',
+
+    // Staff View
+    staffAttendanceTitle: 'स्टाफ एवं उपस्थिति प्रबंधन',
+    teamPayroll: 'टीम एवं पेरोल',
+    addStaffProfileBtn: 'स्टाफ प्रोफाइल जोड़ें',
+    registerNewStaff: 'नया स्टाफ सदस्य पंजीकृत करें',
+    fullName: 'पूरा नाम',
+    roleDesignation: 'पद / रोल',
+    salaryAmount: 'वेतन राशि (₹)',
+    salaryCycle: 'वेतन चक्र',
+    saveStaffMember: 'स्टाफ सदस्य सुरक्षित करें',
+    present: 'उपस्थित (Present)',
+    absent: 'अनुपस्थित (Absent)',
+    monthly: 'मासिक',
+    dailyWager: 'दैनिक मजदूर',
+    noStaffRegistered: 'कोई स्टाफ सदस्य पंजीकृत नहीं है',
+
+    // Personal Finance View
+    personalFinanceTitle: 'व्यक्तिगत वित्त एवं वॉलेट',
+    ownerPrivateAccounting: 'मालिक का निजी खाता',
+    addTransactionBtn: 'लेनदेन जोड़ें',
+    totalIncome: 'कुल आय (Income)',
+    totalExpense: 'कुल खर्चा (Expense)',
+    netPersonalBalance: 'शुद्ध व्यक्तिगत बैलेंस',
+    recordPersonalTx: 'व्यक्तिगत लेनदेन दर्ज करें',
+    type: 'प्रकार',
+    income: 'आय (+)',
+    expenseType: 'खर्चा (-)',
+    categoryNotes: 'श्रेणी / विवरण',
+    saveTransaction: 'लेनदेन सुरक्षित करें',
+    noPersonalTxYet: 'कोई व्यक्तिगत लेनदेन रिकॉर्ड नहीं हुआ है',
+
+    // Tasks & Reminders View
+    tasksRemindersNotesTitle: 'कार्य, रिमाइंडर एवं नोट्स',
+    personalAutomation: 'व्यक्तिगत ऑटोमेशन एवं रिमाइंडर',
+    addTask: 'कार्य जोड़ें',
+    setReminder: 'रिमाइंडर सेट करें',
+    saveNote: 'नोट सुरक्षित करें',
+    reminderTitle: 'रिमाइंडर शीर्षक',
+    noActiveTasks: 'कोई सक्रिय कार्य नहीं। ऊपर जोड़ें।',
+    noReminders: 'कोई अनुसूचित रिमाइंडर नहीं।',
+    noNotes: 'कोई सहेजे गए नोट्स नहीं।',
+
+    // Reports View
+    reportsTitle: 'व्यापार रिपोर्ट एवं विवरण',
+    consolidatedData: 'समेकित परिचालन वित्तीय डेटा',
+    exportCsvReport: 'CSV रिपोर्ट एक्सपोर्ट करें',
+    combinedReportBtn: 'संयुक्त 3-व्यापार संचालन',
+    individualBreakdown: 'व्यक्तिगत व्यापार खातों का विवरण',
+    businessName: 'व्यापार (Business)',
+
+    // AI Assistant View
+    aiCommandCenter: 'AI कमांड सेंटर',
+    commandHistoryLog: 'कमांड इतिहास लॉग',
+    typeHinglishCommand: 'हिंदी या अंग्रेजी में कमांड टाइप करें...',
+    noHistoryYet: 'अभी तक कोई कमांड इतिहास नहीं है। ऊपर बोलें या टाइप करें!',
+
+    // Settings View
+    settingsTitle: 'सेटिंग्स एवं गोपनीयता',
+    preferencesSecurity: 'प्राथमिकताएं, PIN सुरक्षा एवं ऐप नियंत्रण',
+    appearanceTheme: 'थीम (Theme)',
+    toggleThemeBtn: 'थीम बदलें',
+    changePin: '4-अंकीय मालिक सुरक्षा PIN बदलें',
+    updatePinBtn: 'PIN अपडेट करें',
+    pinUpdatedSuccess: 'PIN सफलतापूर्वक अपडेट हो गया!',
+    resetDatabaseTitle: 'डेटाबेस रीसेट करें',
+    resetDatabaseDesc: 'सभी सहेजी गई बिक्री, खर्चे और स्टॉक को हटाता है।',
+    clearAllRecordsBtn: 'सभी डेटाबेस रिकॉर्ड हटाएं',
+
+    // Voice Modal
+    voiceAgentTitle: 'गोपाल AI वॉयस एजेंट',
+    tapToSpeak: 'बोलने के लिए दबाएं',
+    listening: 'सुन रहा है...',
+    speaking: 'बोल रहा है...',
+    continuousListening: 'लगातार बैकग्राउंड लिसनिंग',
+    active: 'सक्रिय',
+    off: 'बंद',
+    aiResponseLabel: 'AI उत्तर:',
+
+    // Backup & APK Modal
+    appBackupTitle: 'मुफ्त एंड्रॉइड ऐप एवं स्टोरेज',
+    offlinePwaDesc: 'गोपाल AI असिस्टेंट ऑफ़लाइन एंड्रॉइड ऐप (PWA) के रूप में चलता है।',
+    exportBackupBtn: 'बैकअप एक्सपोर्ट करें',
+    restoreDataBtn: 'डेटा रिस्टोर करें',
+    backupSuccessMsg: 'बैकअप JSON में एक्सपोर्ट हो गया!',
+    gotIt: 'ठीक है'
+  }
+};
+
+let currentLang: Language = 'en';
+const listeners: Set<() => void> = new Set();
+
+export const i18n = {
+  getLanguage: (): Language => currentLang,
+  setLanguage: (lang: Language) => {
+    currentLang = lang;
+    listeners.forEach((cb) => cb());
+  },
+  t: (key: keyof typeof translations.en): string => {
+    return translations[currentLang]?.[key] || translations.en[key] || key;
+  },
+  subscribe: (cb: () => void) => {
+    listeners.add(cb);
+    return () => listeners.delete(cb);
+  }
+};
+
+export function useTranslation() {
+  const [lang, setLang] = useState<Language>(i18n.getLanguage());
+
+  useEffect(() => {
+    const unsub = i18n.subscribe(() => {
+      setLang(i18n.getLanguage());
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  return {
+    t: i18n.t,
+    lang,
+    setLanguage: i18n.setLanguage,
+    toggleLanguage: () => i18n.setLanguage(lang === 'en' ? 'hi' : 'en')
+  };
+}
