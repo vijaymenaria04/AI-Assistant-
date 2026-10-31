@@ -1,8 +1,11 @@
+import { localDate } from '../services/localDate';
+import { displayProductName, matchesProductName } from '../services/productNames';
+import { isLowStock } from '../services/inventory';
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState, useRef } from 'react';
 import {
   FileText,
   Download,
-  Printer,
   Layers,
   Calendar,
   Filter,
@@ -42,8 +45,6 @@ import {
 } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import * as XLSX from 'xlsx';
-import html2canvas from 'html2canvas';
 
 import { db } from '../services/db';
 import {
@@ -66,15 +67,25 @@ import {
 } from '../types/database';
 import { useTranslation } from '../services/i18n';
 
+const chartTooltipStyle: React.CSSProperties = {
+  backgroundColor: 'var(--chart-tooltip-bg)',
+  borderColor: 'var(--chart-tooltip-border)',
+  color: 'var(--chart-text)',
+  borderRadius: '12px',
+  fontSize: '12px'
+};
+const chartTooltipTextStyle: React.CSSProperties = { color: 'var(--chart-text)' };
+
 interface ReportsViewProps {
   currentBusinessId?: BusinessId;
+  initialWorkspace?: 'combined' | BusinessId;
 }
 
 type DatePeriod = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 type WorkspaceFilter = 'combined' | BusinessId | 'personal';
 type PaymentMethodFilter = 'all' | 'Cash' | 'UPI' | 'Bank Transfer' | 'Credit';
 
-export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'jain-sweets' }) => {
+export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'jain-sweets', initialWorkspace }) => {
   const { t } = useTranslation();
 
   // Raw Database Collections
@@ -94,7 +105,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
   const [cateringOrders, setCateringOrders] = useState<CateringOrder[]>([]);
 
   // Selection Filter States
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceFilter>('combined');
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceFilter>(initialWorkspace ?? currentBusinessId);
   const [datePeriod, setDatePeriod] = useState<DatePeriod>('month');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -105,6 +116,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
   const [aiQuestion, setAiQuestion] = useState<string>('');
   const [aiAnswer, setAiAnswer] = useState<{ query: string; answer: string; insights: string[] } | null>(null);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Chart Container Refs for PNG Export
   const salesChartRef = useRef<HTMLDivElement>(null);
@@ -154,27 +166,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
 
   // Filter helper by date
   const isDateInRange = (dateStr: string) => {
-    if (!dateStr) return false;
-    const itemDate = new Date(dateStr);
-    const now = new Date();
-
-    if (datePeriod === 'today') {
-      const todayStr = now.toISOString().split('T')[0];
-      return dateStr.startsWith(todayStr);
-    } else if (datePeriod === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(now.getDate() - 7);
-      return itemDate >= sevenDaysAgo && itemDate <= now;
-    } else if (datePeriod === 'month') {
-      return itemDate.getMonth() === now.getMonth() && itemDate.getFullYear() === now.getFullYear();
-    } else if (datePeriod === 'year') {
-      return itemDate.getFullYear() === now.getFullYear();
-    } else if (datePeriod === 'custom') {
-      if (startDate && new Date(dateStr) < new Date(startDate)) return false;
-      if (endDate && new Date(dateStr) > new Date(endDate + 'T23:59:59')) return false;
-      return true;
-    }
-    return true; // 'all'
+    const day = dateStr?.slice(0, 10);
+    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const now = new Date(); const today = localDate(now);
+    if (datePeriod === 'today') return day === today;
+    if (datePeriod === 'week') { const start = new Date(now); start.setDate(start.getDate() - 6); return day >= localDate(start) && day <= today; }
+    if (datePeriod === 'month') return day.startsWith(today.slice(0, 7));
+    if (datePeriod === 'year') return day.startsWith(today.slice(0, 4));
+    if (datePeriod === 'custom') return (!startDate || day >= startDate) && (!endDate || day <= endDate);
+    return true;
   };
 
   // Filter helper by payment method
@@ -200,7 +200,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       const q = searchQuery.toLowerCase();
       const firstItemName = s.items?.[0]?.itemName || '';
       return (
-        firstItemName.toLowerCase().includes(q) ||
+        matchesProductName(firstItemName, q) ||
         (s.customerName && s.customerName.toLowerCase().includes(q)) ||
         s.amount.toString().includes(q)
       );
@@ -291,7 +291,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
     .filter((r) => r.status === 'unpaid' || r.status === 'partial')
     .reduce((sum, r) => sum + (r.amount - (r.paidAmount || 0)), 0);
 
-  const pendingPayablesTotal = suppliers.reduce((sum, s) => sum + (s.totalPayable || 0), 0);
+  const filteredSuppliers = suppliers.filter(s => selectedWorkspace === 'combined' ? s.businessId !== 'personal' : s.businessId === selectedWorkspace);
+  const filteredStaff = staffList.filter(s => { const location = s.assignedLocation || s.businessId; return selectedWorkspace === 'combined' ? location !== 'personal' : location === selectedWorkspace; });
+  const pendingPayablesTotal = filteredSuppliers.reduce((sum, s) => sum + (s.totalPayable || 0), 0);
 
   // CHART 1: Sales Revenue Trend
   const salesTrendMap: Record<string, number> = {};
@@ -325,12 +327,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
     Cash: 0,
     UPI: 0,
     'Bank Transfer': 0,
-    Credit: 0
+    Credit: 0,
+    Unknown: 0
   };
   filteredSales.forEach((s) => {
-    const mode = s.paymentMethod || 'cash';
-    let key = 'Cash';
-    if (mode === 'upi' || mode === 'online') key = 'UPI';
+    const mode: string = s.paymentMethod || '';
+    let key = 'Unknown';
+    if (mode === 'cash') key = 'Cash';
+    else if (mode === 'upi') key = 'UPI';
+    else if (mode === 'online' || mode === 'bank') key = 'Bank Transfer';
     else if (mode === 'credit') key = 'Credit';
     paymentMethodMap[key] = (paymentMethodMap[key] || 0) + s.amount;
   });
@@ -341,32 +346,33 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       value: paymentMethodMap[k]
     }));
 
-  const MODE_COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B'];
+  const MODE_COLORS: Record<string, string> = { Cash: '#10B981', UPI: '#3B82F6', 'Bank Transfer': '#8B5CF6', Credit: '#F59E0B', Unknown: '#94A3B8' };
 
   // CHART 4: Inventory Low Stock Items
-  const lowStockItems = filteredInventory.filter((item) => item.stockQuantity <= item.minStockLevel);
+  const lowStockItems = filteredInventory.filter((item) => isLowStock(item));
   const stockOverviewData = filteredInventory.slice(0, 8).map((item) => ({
-    name: item.name,
+    name: displayProductName(item.name),
     CurrentStock: item.stockQuantity,
     MinRequired: item.minStockLevel
   }));
 
   // CHART 5: Staff Allocation & Manpower Gap
   const staffLocationMap: Record<string, number> = {};
-  staffList.forEach((s) => {
+  filteredStaff.forEach((s) => {
     const locName = BUSINESSES[s.assignedLocation || s.businessId]?.name || 'Unassigned';
     staffLocationMap[locName] = (staffLocationMap[locName] || 0) + 1;
   });
 
-  const manpowerGapData = ['jain-sweets', 'paan-bai', 'kesarwadi', 'gopal-caterers'].map((locKey) => {
+  const manpowerGapData = ['jain-sweets', 'paan-bai', 'kesarwadi', 'gopal-caterers'].filter(locKey => selectedWorkspace === 'combined' || selectedWorkspace === locKey).map((locKey) => {
     const bizName = BUSINESSES[locKey as BusinessId]?.name || locKey;
-    const assigned = staffList.filter((s) => (s.assignedLocation || s.businessId) === locKey).length;
+    const assigned = filteredStaff.filter((s) => (s.assignedLocation || s.businessId) === locKey).length;
     const required = manpowerPlans
       .filter((mp) => mp.businessId === locKey)
       .reduce((sum, item) => sum + item.requiredCount, 0);
 
     return {
-      location: bizName,
+      businessId: locKey,
+      location: translateText(bizName),
       Required: required,
       Assigned: assigned,
       Shortage: Math.max(0, required - assigned)
@@ -405,7 +411,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       selectedWorkspace === 'combined'
         ? 'All Businesses Consolidated'
         : selectedWorkspace === 'personal'
-        ? 'Personal Finance'
+        ? 'Personal'
         : BUSINESSES[selectedWorkspace]?.name || selectedWorkspace;
 
     doc.text(`Workspace: ${workspaceName} | Filter Period: ${datePeriod.toUpperCase()}`, 14, 27);
@@ -423,7 +429,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         ['Pending Customer Receivables', `Rs. ${pendingReceivablesTotal.toLocaleString('en-IN')}`],
         ['Pending Supplier Payables', `Rs. ${pendingPayablesTotal.toLocaleString('en-IN')}`],
         ['Low Stock Alert Items Count', `${lowStockItems.length} items`],
-        ['Active Staff Members', `${staffList.length} employees`],
+        ['Active Staff Members', `${filteredStaff.length} employees`],
         ['Gopal Caterers Bookings', `${filteredCateringOrders.length} events`]
       ],
       theme: 'grid',
@@ -439,9 +445,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
     const salesTableBody = filteredSales.slice(0, 15).map((s) => [
       s.date,
       BUSINESSES[s.businessId]?.name || s.businessId,
-      s.items?.[0]?.itemName || 'General Sale',
-      s.items?.reduce((acc, i) => acc + i.quantity, 0) || 1,
-      s.paymentMethod || 'cash',
+      s.items?.[0]?.itemName || '',
+      s.items?.length ? s.items.reduce((acc, i) => acc + i.quantity, 0) : '',
+      s.paymentMethod || '',
       `Rs. ${s.amount.toLocaleString('en-IN')}`
     ]);
 
@@ -465,7 +471,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         BUSINESSES[e.businessId]?.name || e.businessId,
         e.notes || e.category,
         e.category,
-        e.paymentMethod || 'cash',
+        e.paymentMethod || '',
         `Rs. ${e.amount.toLocaleString('en-IN')}`
       ]);
 
@@ -482,8 +488,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
   };
 
   // EXPORT: Excel Workbook (.xlsx)
-  const handleExportExcel = () => {
-    const wb = XLSX.utils.book_new();
+  const handleExportExcel = async () => {
+    setExportError(null);
+    try {
+    const ExcelJS = await import('exceljs');
+    const wb = new ExcelJS.Workbook();
+    const appendSheet = (name: string, rows: Record<string, string | number>[]) => {
+      const sheet = wb.addWorksheet(name);
+      const keys = Object.keys(rows[0]);
+      sheet.columns = keys.map(key => ({ header: key, key, width: Math.max(16, key.length + 3) }));
+      sheet.addRows(rows);
+    };
 
     // Sheet 1: Executive Summary
     const summaryData = [
@@ -496,11 +511,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       { Metric: 'Pending Receivables (INR)', Value: pendingReceivablesTotal },
       { Metric: 'Pending Payables (INR)', Value: pendingPayablesTotal },
       { Metric: 'Low Stock Alert Count', Value: lowStockItems.length },
-      { Metric: 'Active Employees', Value: staffList.length },
+      { Metric: 'Active Employees', Value: filteredStaff.length },
       { Metric: 'Catering Events Booked', Value: filteredCateringOrders.length }
     ];
-    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+    appendSheet('Summary', summaryData);
 
     // Sheet 2: Sales
     if (filteredSales.length > 0) {
@@ -508,14 +522,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         ID: s.id,
         Date: s.date,
         Business: BUSINESSES[s.businessId]?.name || s.businessId,
-        Product: s.items?.[0]?.itemName || 'General Sale',
-        Quantity: s.items?.reduce((acc, i) => acc + i.quantity, 0) || 1,
-        PaymentMethod: s.paymentMethod || 'cash',
+        Product: s.items?.[0]?.itemName || '',
+        Quantity: s.items?.length ? s.items.reduce((acc, i) => acc + i.quantity, 0) : '',
+        PaymentMethod: s.paymentMethod || '',
         Customer: s.customerName || '',
         Amount: s.amount
       }));
-      const wsSales = XLSX.utils.json_to_sheet(salesExport);
-      XLSX.utils.book_append_sheet(wb, wsSales, 'Sales');
+      appendSheet('Sales', salesExport);
     }
 
     // Sheet 3: Expenses
@@ -526,11 +539,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         Business: BUSINESSES[e.businessId]?.name || e.businessId,
         Notes: e.notes || e.category,
         Category: e.category,
-        PaymentMethod: e.paymentMethod || 'cash',
+        PaymentMethod: e.paymentMethod || '',
         Amount: e.amount
       }));
-      const wsExpenses = XLSX.utils.json_to_sheet(expensesExport);
-      XLSX.utils.book_append_sheet(wb, wsExpenses, 'Expenses');
+      appendSheet('Expenses', expensesExport);
     }
 
     // Sheet 4: Inventory
@@ -542,32 +554,54 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         Quantity: i.stockQuantity,
         Unit: i.unit,
         MinStockLevel: i.minStockLevel,
-        Status: i.stockQuantity <= i.minStockLevel ? 'LOW STOCK' : 'Normal'
+        Status: i.reorderAlertEnabled === false ? 'Alert not set' : isLowStock(i) ? 'LOW STOCK' : 'Normal'
       }));
-      const wsInventory = XLSX.utils.json_to_sheet(inventoryExport);
-      XLSX.utils.book_append_sheet(wb, wsInventory, 'Inventory');
+      appendSheet('Inventory', inventoryExport);
     }
 
     // Write file
-    XLSX.writeFile(wb, `GopalAI_Analytics_${selectedWorkspace}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const bytes = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const link = document.createElement('a'); link.href = url; link.download = `GopalAI_Analytics_${selectedWorkspace}_${localDate()}.xlsx`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { setExportError('Excel export failed. Please try again.'); }
   };
 
   // EXPORT: Download Chart as PNG
   const handleDownloadChartPNG = async (chartRef: React.RefObject<HTMLDivElement | null>, title: string) => {
-    if (!chartRef.current) return;
+    setExportError(null);
     try {
-      const canvas = await html2canvas(chartRef.current, {
-        scale: 2,
-        backgroundColor: '#0f172a'
+      const svg = chartRef.current?.querySelector('svg.recharts-surface') as SVGSVGElement | null;
+      if (!svg) throw new Error('No chart is available to download.');
+      const bounds = svg.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) throw new Error('The chart is not visible.');
+      const clone = svg.cloneNode(true) as SVGSVGElement;
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('width', String(bounds.width)); clone.setAttribute('height', String(bounds.height));
+      const originals = [svg, ...Array.from(svg.querySelectorAll('*'))];
+      const copies = [clone, ...Array.from(clone.querySelectorAll('*'))];
+      originals.forEach((element, index) => {
+        const style = getComputedStyle(element);
+        const copy = copies[index] as HTMLElement | SVGElement;
+        for (const property of ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'font-family', 'font-size', 'font-weight', 'text-anchor']) {
+          const value = style.getPropertyValue(property);
+          if (value && !value.includes('oklch(')) copy.style.setProperty(property, value);
+        }
       });
-      const image = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.href = image;
-      link.download = `GopalAI_${title.replace(/\s+/g, '_')}_Chart.png`;
-      link.click();
-    } catch (err) {
-      console.error('Error downloading chart image:', err);
-    }
+      const source = new XMLSerializer().serializeToString(clone);
+      const url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml;charset=utf-8' }));
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error('Could not render chart.')); img.src = url; });
+        const canvas = document.createElement('canvas'); canvas.width = Math.ceil(bounds.width * 2); canvas.height = Math.ceil((bounds.height + 38) * 2);
+        const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas is not available.');
+        const dark = document.documentElement.classList.contains('dark');
+        ctx.scale(2, 2); ctx.fillStyle = dark ? '#0f172a' : '#ffffff'; ctx.fillRect(0, 0, bounds.width, bounds.height + 38);
+        ctx.fillStyle = dark ? '#f8fafc' : '#0f172a'; ctx.font = 'bold 16px sans-serif'; ctx.fillText(title, 12, 25);
+        ctx.drawImage(image, 0, 38, bounds.width, bounds.height);
+        const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not export chart.')), 'image/png'));
+        const downloadUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = `GopalAI_${title.replace(/\s+/g, '_')}_Chart.png`; link.click(); setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      } finally { URL.revokeObjectURL(url); }
+    } catch (error) { setExportError(error instanceof Error ? error.message : 'Chart export failed.'); }
   };
 
   // EXPORT: Web Share
@@ -580,17 +614,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           url: window.location.href
         });
       } catch (err) {
-        console.log('Share dismissed', err);
+        if ((err as Error)?.name !== 'AbortError') setExportError('Could not share the report.');
       }
     } else {
-      navigator.clipboard.writeText(
-        `GopalAI Operations Summary:\nSales: Rs. ${totalSalesAmount}\nExpenses: Rs. ${totalExpensesAmount}\nPending Receivables: Rs. ${pendingReceivablesTotal}`
-      );
-      alert('Report summary copied to clipboard!');
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard not available.');
+        await navigator.clipboard.writeText(`GopalAI Operations Summary:\nSales: Rs. ${totalSalesAmount}\nExpenses: Rs. ${totalExpensesAmount}\nPending Receivables: Rs. ${pendingReceivablesTotal}`);
+        alert('Report summary copied to clipboard!');
+      } catch { setExportError('Could not copy the report summary.'); }
     }
   };
 
-  // AI Analytics Query Execution
+  // Local keyword-based report lookup; it does not call an AI service.
   const handleAskGopalAI = (queryText: string) => {
     setAiQuestion(queryText);
     setIsAiLoading(true);
@@ -602,7 +637,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
 
       if (q.includes('highest sales') || q.includes('top business')) {
         const salesByBiz: Record<string, number> = {};
-        sales.forEach((s) => {
+        filteredSales.forEach((s) => {
           const name = BUSINESSES[s.businessId]?.name || s.businessId;
           salesByBiz[name] = (salesByBiz[name] || 0) + s.amount;
         });
@@ -616,11 +651,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           }
         });
 
-        answer = `Top Business by Sales Revenue is "${topBiz}" with total recorded sales of ₹${maxSales.toLocaleString('en-IN')}.`;
-        insights = [
-          `Total business sales across all locations: ₹${sales.reduce((a, b) => a + b.amount, 0).toLocaleString('en-IN')}`,
-          `Consider increasing stock and high-demand inventory at ${topBiz}.`
-        ];
+        answer = filteredSales.length ? `Top business in the selected report is "${topBiz}" with recorded sales of ₹${maxSales.toLocaleString('en-IN')}.` : 'No sales records match the selected filters.';
+        insights = filteredSales.length ? [`Total sales in the selected report: ₹${filteredSales.reduce((a, b) => a + b.amount, 0).toLocaleString('en-IN')}`] : [];
       } else if (q.includes('spent') || q.includes('expense')) {
         answer = `Total expenses recorded for ${datePeriod.toUpperCase()} filter period amount to ₹${totalExpensesAmount.toLocaleString('en-IN')}.`;
         insights = [
@@ -630,8 +662,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         ];
       } else if (q.includes('restocking') || q.includes('stock') || q.includes('inventory')) {
         if (lowStockItems.length === 0) {
-          answer = 'All inventory items across Jain Sweets, Paan Bai Canteen & Kesarwadi Canteen are currently at healthy stock levels above minimum thresholds.';
-          insights = ['0 items need urgent reordering.'];
+          const unset = filteredInventory.filter(i => i.reorderAlertEnabled === false).length;
+          answer = 'No low-stock alerts are recorded for the selected workspace.';
+          insights = unset ? [`${unset} items do not have reorder alerts set; their stock level cannot be assessed against a threshold.`] : [];
         } else {
           answer = `Found ${lowStockItems.length} inventory items requiring urgent restocking:`;
           insights = lowStockItems.map(
@@ -639,17 +672,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           );
         }
       } else if (q.includes('employee') || q.includes('staff')) {
-        const totalReq = manpowerGapData.reduce((sum, m) => sum + m.Required, 0);
-        const totalAssigned = manpowerGapData.reduce((sum, m) => sum + m.Assigned, 0);
-        const shortage = Math.max(0, totalReq - totalAssigned);
-
-        answer = `Currently ${staffList.length} total employees are registered. Required staffing total is ${totalReq}, assigned count is ${totalAssigned}, leaving a shortage of ${shortage} staff members.`;
-        insights = manpowerGapData.map(
-          (m) => `${m.location}: Assigned ${m.Assigned} / Required ${m.Required} ${m.Shortage > 0 ? `(Shortage: ${m.Shortage})` : '(Fully Staffed)'}`
-        );
+        const planned = manpowerGapData.filter(m => manpowerPlans.some(p => p.businessId === m.businessId));
+        const missing = manpowerGapData.length - planned.length;
+        if (!planned.length) {
+          answer = `There are ${filteredStaff.length} employees in the selected workspace, but no staffing plan is recorded; shortage cannot be determined.`;
+          insights = [];
+        } else {
+          answer = `Staffing plans exist for ${planned.length} location(s). ${missing ? 'Some locations have no plan, so a complete shortage cannot be determined.' : 'Review each location below.'}`;
+          insights = planned.map(m => `${m.location}: Assigned ${m.Assigned} / Required ${m.Required} ${m.Shortage > 0 ? `(Shortage: ${m.Shortage})` : '(No shortage against recorded plan)'}`);
+        }
       } else if (q.includes('catering') || q.includes('orders')) {
-        answer = `There are ${cateringOrders.length} total Gopal Caterers bookings on record, generating ₹${cateringOrders.reduce((a, b) => a + b.totalAmount, 0).toLocaleString('en-IN')} total order value.`;
-        insights = cateringOrders.slice(0, 3).map((co) => `${co.customerName} - ${co.eventType} on ${co.eventDate} (${co.guestCount} guests)`);
+        answer = `There are ${filteredCateringOrders.length} bookings matching the selected report, with ₹${filteredCateringOrders.reduce((a, b) => a + b.totalAmount, 0).toLocaleString('en-IN')} total order value.`;
+        insights = filteredCateringOrders.slice(0, 3).map((co) => `${co.customerName} - ${co.eventType} on ${co.eventDate} (${co.guestCount} guests)`);
       } else if (q.includes('pending') || q.includes('payment')) {
         answer = `Pending Receivables: ₹${pendingReceivablesTotal.toLocaleString('en-IN')} | Pending Supplier Payables: ₹${pendingPayablesTotal.toLocaleString('en-IN')}.`;
         insights = [
@@ -657,7 +691,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           `Ensure supplier balance is cleared prior to upcoming stock deliveries.`
         ];
       } else {
-        answer = `GopalAI Analytics Summary: Total Sales = ₹${totalSalesAmount.toLocaleString('en-IN')}, Expenses = ₹${totalExpensesAmount.toLocaleString('en-IN')}, Active Staff = ${staffList.length}, Low Stock Alerts = ${lowStockItems.length}.`;
+        answer = 'This local report lookup did not recognize the question. Choose one of the suggested report questions.';
         insights = ['Use workspace and date filters to drill down into specific business metrics.'];
       }
 
@@ -667,19 +701,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
   };
 
   return (
-    <div className="p-4 space-y-5 max-w-6xl mx-auto pb-28 text-slate-900 dark:text-slate-100 transition-colors">
+    <div className="reports-view p-4 space-y-5 max-w-6xl mx-auto pb-28 text-slate-900 dark:text-slate-100 transition-colors">
       {/* Header & Export Options */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-amber-600 dark:text-amber-400 flex items-center gap-2.5">
             <BarChart2 className="w-7 h-7 text-amber-500" />
-            <span>Analytics & Reports Dashboard</span>
+            <span>{translateText("Analytics & Reports Dashboard")}</span>
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-            100% database-backed analytics, trends, manpower gaps, catering orders & export tools.
-          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">{translateText("100% database-backed analytics, trends, manpower gaps, catering orders & export tools.")}</p>
         </div>
 
+        {exportError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{exportError}</p>}
         {/* Action Buttons Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -687,7 +720,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
             className="py-2.5 px-3.5 rounded-2xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 font-bold text-xs flex items-center gap-1.5 border border-amber-500/30 transition active:scale-95"
           >
             <FileText className="w-4 h-4 text-amber-500" />
-            <span>PDF Report</span>
+            <span>{translateText("PDF Report")}</span>
           </button>
 
           <button
@@ -699,19 +732,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </button>
 
           <button
-            onClick={() => window.print()}
-            className="py-2.5 px-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-xs flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 transition"
-          >
-            <Printer className="w-4 h-4 text-slate-500" />
-            <span>Print</span>
-          </button>
-
-          <button
             onClick={handleShareReport}
             className="py-2.5 px-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-xs flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 transition"
           >
             <Share2 className="w-4 h-4 text-slate-500" />
-            <span>Share</span>
+            <span>{translateText("Share")}</span>
           </button>
         </div>
       </div>
@@ -720,8 +745,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400 pl-1 whitespace-nowrap flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5 text-amber-500" /> Workspace:
-          </span>
+            <Filter className="w-3.5 h-3.5 text-amber-500" />{" " + translateText("Workspace:")}</span>
 
           <button
             onClick={() => setSelectedWorkspace('combined')}
@@ -732,10 +756,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Consolidated (All Businesses)</span>
+            <span>{translateText("Consolidated (All Businesses)")}</span>
           </button>
 
-          {Object.entries(BUSINESSES).map(([id, info]) => (
+          {Object.entries(BUSINESSES).filter(([id]) => id !== 'personal').map(([id, info]) => (
             <button
               key={id}
               onClick={() => setSelectedWorkspace(id as BusinessId)}
@@ -745,7 +769,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
                   : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
               }`}
             >
-              <span>{info.name}</span>
+              <span>{translateText(info.name)}</span>
             </button>
           ))}
 
@@ -758,7 +782,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
             }`}
           >
             <Briefcase className="w-3.5 h-3.5" />
-            <span>Personal Finance</span>
+            <span>{translateText("Personal")}</span>
           </button>
         </div>
       </div>
@@ -768,8 +792,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-amber-500" />
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Date Filter Range:</span>
-            <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl text-xs font-bold gap-1 overflow-x-auto border border-slate-200 dark:border-slate-800">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{translateText("Date Filter Range:")}</span>
+            <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl text-xs font-bold gap-1 overflow-x-auto no-scrollbar border border-slate-200 dark:border-slate-800">
               {(['today', 'week', 'month', 'year', 'all', 'custom'] as DatePeriod[]).map((p) => (
                 <button
                   key={p}
@@ -780,7 +804,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  {p === 'today' ? 'Today' : p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : p === 'year' ? 'This Year' : p === 'all' ? 'All Time' : 'Custom'}
+                  {p === 'today' ? translateText("Today") : p === 'week' ? translateText("This Week") : p === 'month' ? translateText("This Month") : p === 'year' ? translateText("This Year") : p === 'all' ? translateText("All Time") : translateText("Custom")}
                 </button>
               ))}
             </div>
@@ -793,7 +817,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search product, title..."
+              placeholder={translateText("Search product, title...")}
               className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
             />
           </div>
@@ -801,14 +825,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
 
         {datePeriod === 'custom' && (
           <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 text-xs">
-            <span className="font-semibold text-slate-500">From:</span>
+            <span className="font-semibold text-slate-500">{translateText("From:")}</span>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               className="bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white"
             />
-            <span className="font-semibold text-slate-500">To:</span>
+            <span className="font-semibold text-slate-500">{translateText("To:")}</span>
             <input
               type="date"
               value={endDate}
@@ -820,7 +844,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
 
         {/* Payment Method Filter */}
         <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 overflow-x-auto no-scrollbar">
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">Payment Mode:</span>
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">{translateText("Payment Mode:")}</span>
           {(['all', 'Cash', 'UPI', 'Bank Transfer', 'Credit'] as PaymentMethodFilter[]).map((mode) => (
             <button
               key={mode}
@@ -831,7 +855,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              {mode === 'all' ? 'All Modes' : mode}
+              {mode === 'all' ? translateText("All Modes") : translateText(mode)}
             </button>
           ))}
         </div>
@@ -845,10 +869,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </div>
           <div>
             <h2 className="text-sm font-extrabold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
-              <span>GopalAI Smart Analytics & Query Assistant</span>
+              <span>{translateText("Report quick lookup")}</span>
               <Sparkles className="w-4 h-4 text-amber-500" />
             </h2>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400">Ask any operational question to get instant data-backed answers.</p>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400">{translateText("Local keyword lookup for the suggested report questions; not an AI service.")}</p>
           </div>
         </div>
 
@@ -856,10 +880,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         <div className="flex flex-wrap gap-2 text-xs">
           {[
             'Which business had the highest sales?',
-            'How much was spent this month?',
+            'How much was spent in the selected period?',
             'Which items need restocking?',
             'How many employees are required?',
-            'How many catering orders are upcoming?',
+            'How many catering orders match this report?',
             'Which payments are pending?'
           ].map((prompt) => (
             <button
@@ -867,7 +891,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
               onClick={() => handleAskGopalAI(prompt)}
               className="py-1.5 px-3 rounded-xl bg-white dark:bg-slate-900 hover:bg-amber-500/20 text-slate-700 dark:text-slate-300 text-[11px] font-semibold border border-amber-500/20 transition active:scale-95 text-left"
             >
-              {prompt}
+              {translateText(prompt)}
             </button>
           ))}
         </div>
@@ -879,15 +903,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && aiQuestion.trim() && handleAskGopalAI(aiQuestion)}
-            placeholder="Type your question (e.g. 'How much cash sales today?')..."
-            className="flex-1 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-500/30 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+            placeholder={translateText("Enter a suggested report question...")}
+            className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-500/30 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
           />
           <button
             onClick={() => aiQuestion.trim() && handleAskGopalAI(aiQuestion)}
             disabled={isAiLoading}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 disabled:opacity-50"
           >
-            {isAiLoading ? 'Analyzing...' : 'Ask AI'}
+            {isAiLoading ? translateText("Looking up...") : translateText("Look up")}
           </button>
         </div>
 
@@ -896,14 +920,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-amber-500/40 space-y-2 animate-fadeIn">
             <div className="text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              <span>Query: "{aiAnswer.query}"</span>
+              <span>{translateText("Query: \"")}{aiAnswer.query}"</span>
             </div>
             <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed pl-1">
               {aiAnswer.answer}
             </p>
             {aiAnswer.insights.length > 0 && (
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
-                <span className="font-bold text-amber-500">Key Data Insights:</span>
+                <span className="font-bold text-amber-500">{translateText("Key Data Insights:")}</span>
                 <ul className="list-disc list-inside space-y-0.5">
                   {aiAnswer.insights.map((ins, idx) => (
                     <li key={idx}>{ins}</li>
@@ -919,55 +943,55 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center justify-between">
-            <span>Sales Revenue</span>
+            <span>{translateText("Sales Revenue")}</span>
             <TrendingUp className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-2">
             ₹{totalSalesAmount.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">{filteredSales.length} Transactions Recorded</div>
+          <div className="text-[10px] text-slate-400 mt-1">{filteredSales.length}{" " + translateText("Transactions Recorded")}</div>
         </div>
 
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center justify-between">
-            <span>Operating Expenses</span>
+            <span>{translateText("Operating Expenses")}</span>
             <ArrowUpRight className="w-4 h-4 text-rose-500" />
           </div>
           <div className="text-xl sm:text-2xl font-black text-rose-600 dark:text-rose-400 mt-2">
             ₹{totalExpensesAmount.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">{filteredExpenses.length} Expense Records</div>
+          <div className="text-[10px] text-slate-400 mt-1">{filteredExpenses.length}{" " + translateText("Expense Records")}</div>
         </div>
 
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center justify-between">
-            <span>Pending Receivables</span>
+            <span>{translateText("Pending Receivables")}</span>
             <ArrowDownLeft className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-xl sm:text-2xl font-black text-blue-600 dark:text-blue-400 mt-2">
             ₹{pendingReceivablesTotal.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">Pending Customer Payments</div>
+          <div className="text-[10px] text-slate-400 mt-1">{translateText("Pending Customer Payments")}</div>
         </div>
 
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center justify-between">
-            <span>Pending Payables</span>
+            <span>{translateText("Pending Payables")}</span>
             <CreditCard className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-xl sm:text-2xl font-black text-amber-600 dark:text-amber-400 mt-2">
             ₹{pendingPayablesTotal.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">Pending Supplier Outstanding</div>
+          <div className="text-[10px] text-slate-400 mt-1">{translateText("Pending Supplier Outstanding")}</div>
         </div>
       </div>
 
       {/* CHART 1: Sales Revenue Trend */}
-      <div ref={salesChartRef} className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+      <div ref={salesChartRef} className="chart-theme p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-extrabold text-amber-600 dark:text-amber-400 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-amber-500" />
-            <span>Sales Revenue Trends (Daily / Periodical)</span>
+            <span>{translateText("Sales Revenue Trends (Daily / Periodical)")}</span>
           </h3>
           <button
             onClick={() => handleDownloadChartPNG(salesChartRef, 'Sales_Revenue_Trend')}
@@ -978,17 +1002,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         </div>
 
         {salesTrendData.length === 0 ? (
-          <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-            No sales records exist in database for selected filter criteria.
-          </div>
+          <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">{translateText("No sales records exist in database for selected filter criteria.")}</div>
         ) : (
           <div className="h-64 w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={salesTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} />
-                <YAxis stroke="#94a3b8" fontSize={10} />
-                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" opacity={0.55} />
+                <XAxis dataKey="date" stroke="var(--chart-axis)" fontSize={10} />
+                <YAxis stroke="var(--chart-axis)" fontSize={10} />
+                <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
                 <Area type="monotone" dataKey="Sales" stroke="#eab308" fill="#eab308" fillOpacity={0.25} strokeWidth={3} />
               </AreaChart>
             </ResponsiveContainer>
@@ -999,11 +1021,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       {/* CHART 2 & 3 GRID: Income vs Expenses & Payment Modes */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* CHART 2: Income vs Expenses Comparison */}
-        <div ref={incomeExpenseChartRef} className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+        <div ref={incomeExpenseChartRef} className="chart-theme p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-emerald-500" />
-              <span>Sales Revenue vs Expenses</span>
+              <span>{translateText("Sales Revenue vs Expenses")}</span>
             </h3>
             <button
               onClick={() => handleDownloadChartPNG(incomeExpenseChartRef, 'Income_Vs_Expenses')}
@@ -1014,19 +1036,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </div>
 
           {incomeExpenseData.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-              No financial entries found.
-            </div>
+            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">{translateText("No financial entries found.")}</div>
           ) : (
             <div className="h-56 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={incomeExpenseData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} />
-                  <YAxis stroke="#94a3b8" fontSize={10} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" opacity={0.55} />
+                  <XAxis dataKey="date" stroke="var(--chart-axis)" fontSize={9} />
+                  <YAxis stroke="var(--chart-axis)" fontSize={10} />
+                  <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
                   <Legend wrapperStyle={{ fontSize: '10px' }} />
-                  <Bar dataKey="SalesIncome" fill="#10b981" radius={[4, 4, 0, 0]} name="Sales Income" />
+                  <Bar dataKey="SalesIncome" fill="#10b981" radius={[4, 4, 0, 0]} name={translateText('Sales Income')} />
                   <Bar dataKey="Expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} name="Expenses" />
                 </BarChart>
               </ResponsiveContainer>
@@ -1035,11 +1055,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         </div>
 
         {/* CHART 3: Cash, UPI, Bank Transfer Mode Breakdown */}
-        <div ref={paymentMethodChartRef} className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+        <div ref={paymentMethodChartRef} className="chart-theme p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <PieIcon className="w-4 h-4 text-blue-500" />
-              <span>Payment Mode Breakdown (Cash/UPI/Bank)</span>
+              <span>{translateText("Payment Mode Breakdown (Cash/UPI/Bank)")}</span>
             </h3>
             <button
               onClick={() => handleDownloadChartPNG(paymentMethodChartRef, 'Payment_Mode_Breakdown')}
@@ -1050,9 +1070,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </div>
 
           {paymentMethodData.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-              No sales mode entries exist.
-            </div>
+            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">{translateText("No sales mode entries exist.")}</div>
           ) : (
             <div className="h-56 w-full pt-2 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
@@ -1067,11 +1085,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
                     dataKey="value"
                     label={({ name, percent }) => `${name} (${((percent || 0) * 100).toFixed(0)}%)`}
                   >
-                    {paymentMethodData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={MODE_COLORS[index % MODE_COLORS.length]} />
+                    {paymentMethodData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={MODE_COLORS[entry.name]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
+                  <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -1082,11 +1100,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
       {/* CHART 4 & 5 GRID: Inventory & Staffing Gap */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* CHART 4: Inventory Low-Stock Alerts */}
-        <div ref={stockChartRef} className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+        <div ref={stockChartRef} className="chart-theme p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <PackageCheck className="w-4 h-4 text-amber-500" />
-              <span>Inventory Stock & Reorder Levels</span>
+              <span>{translateText("Inventory Stock & Reorder Levels")}</span>
             </h3>
             <button
               onClick={() => handleDownloadChartPNG(stockChartRef, 'Inventory_Stock_Levels')}
@@ -1097,19 +1115,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </div>
 
           {stockOverviewData.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-              No inventory items added yet.
-            </div>
+            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">{translateText("No inventory items added yet.")}</div>
           ) : (
             <div className="h-56 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stockOverviewData}>
-                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} />
-                  <YAxis stroke="#94a3b8" fontSize={10} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
+                  <XAxis dataKey="name" stroke="var(--chart-axis)" fontSize={9} />
+                  <YAxis stroke="var(--chart-axis)" fontSize={10} />
+                  <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
                   <Legend wrapperStyle={{ fontSize: '10px' }} />
-                  <Bar dataKey="CurrentStock" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Current Stock" />
-                  <Bar dataKey="MinRequired" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Min Required" />
+                  <Bar dataKey="CurrentStock" fill="#3b82f6" radius={[4, 4, 0, 0]} name={translateText('Current Stock')} />
+                  <Bar dataKey="MinRequired" fill="#f59e0b" radius={[4, 4, 0, 0]} name={translateText('Min Required')} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1117,11 +1133,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         </div>
 
         {/* CHART 5: Manpower Staffing Gap (Required vs Assigned) */}
-        <div ref={staffGapChartRef} className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+        <div ref={staffGapChartRef} className="chart-theme p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <Users className="w-4 h-4 text-purple-500" />
-              <span>Location Staffing Gap (Required vs Assigned)</span>
+              <span>{translateText("Location Staffing Gap (Required vs Assigned)")}</span>
             </h3>
             <button
               onClick={() => handleDownloadChartPNG(staffGapChartRef, 'Staffing_Gap')}
@@ -1134,13 +1150,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           <div className="h-56 w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={manpowerGapData}>
-                <XAxis dataKey="location" stroke="#94a3b8" fontSize={9} />
-                <YAxis stroke="#94a3b8" fontSize={10} />
-                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
+                <XAxis dataKey="location" stroke="var(--chart-axis)" fontSize={9} />
+                <YAxis stroke="var(--chart-axis)" fontSize={10} />
+                <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
-                <Bar dataKey="Required" fill="#eab308" radius={[4, 4, 0, 0]} name="Required Staff" />
-                <Bar dataKey="Assigned" fill="#10b981" radius={[4, 4, 0, 0]} name="Assigned Staff" />
-                <Bar dataKey="Shortage" fill="#f43f5e" radius={[4, 4, 0, 0]} name="Shortage Gap" />
+                <Bar dataKey="Required" fill="#eab308" radius={[4, 4, 0, 0]} name={translateText('Required Staff')} />
+                <Bar dataKey="Assigned" fill="#10b981" radius={[4, 4, 0, 0]} name={translateText('Assigned Staff')} />
+                <Bar dataKey="Shortage" fill="#f43f5e" radius={[4, 4, 0, 0]} name={translateText('Shortage Gap')} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1149,11 +1165,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
 
       {/* CHART 6: Gopal Caterers Booking & Revenue Trend */}
       {(selectedWorkspace === 'combined' || selectedWorkspace === 'gopal-caterers') && (
-        <div ref={cateringChartRef} className="p-5 rounded-3xl bg-gradient-to-br from-purple-500/10 via-slate-100 to-white dark:via-slate-900 dark:to-slate-900 border border-purple-500/30 shadow-sm space-y-3">
+        <div ref={cateringChartRef} className="chart-theme p-5 rounded-3xl bg-gradient-to-br from-purple-500/10 via-slate-100 to-white dark:via-slate-900 dark:to-slate-900 border border-purple-500/30 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-extrabold text-purple-700 dark:text-purple-300 flex items-center gap-2">
               <ChefHat className="w-5 h-5 text-purple-500" />
-              <span>Gopal Caterers Outside Bookings & Revenue Trend</span>
+              <span>{translateText("Gopal Caterers Outside Bookings & Revenue Trend")}</span>
             </h3>
             <button
               onClick={() => handleDownloadChartPNG(cateringChartRef, 'Gopal_Caterers_Trends')}
@@ -1164,17 +1180,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
           </div>
 
           {cateringTrendData.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-purple-500/30 rounded-2xl">
-              No Gopal Caterers bookings found in database for selected filter.
-            </div>
+            <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-purple-500/30 rounded-2xl">{translateText("No Gopal Caterers bookings found in database for selected filter.")}</div>
           ) : (
             <div className="h-60 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={cateringTrendData}>
-                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} />
-                  <YAxis stroke="#94a3b8" fontSize={10} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#8b5cf6', color: '#f8fafc', borderRadius: '12px', fontSize: '12px' }} />
-                  <Bar dataKey="Revenue" fill="#8b5cf6" radius={[8, 8, 0, 0]} name="Order Revenue (INR)" />
+                  <XAxis dataKey="date" stroke="var(--chart-axis)" fontSize={10} />
+                  <YAxis stroke="var(--chart-axis)" fontSize={10} />
+                  <Tooltip cursor={{ fill: 'var(--chart-cursor)', stroke: 'var(--chart-cursor-line)' }} contentStyle={chartTooltipStyle} labelStyle={chartTooltipTextStyle} />
+                  <Bar dataKey="Revenue" fill="#8b5cf6" radius={[8, 8, 0, 0]} name={translateText('Order Revenue (INR)')} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1187,25 +1201,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <FileText className="w-4 h-4 text-amber-500" />
-            <span>Database Sales Records Summary ({filteredSales.length})</span>
+            <span>{translateText("Database Sales Records Summary (")}{filteredSales.length})</span>
           </h3>
-          <span className="text-xs text-slate-500 font-bold">Actual Records</span>
+          <span className="text-xs text-slate-500 font-bold">{translateText("Actual Records")}</span>
         </div>
 
         {filteredSales.length === 0 ? (
-          <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-            No sales transactions found in database matching current filters.
-          </div>
+          <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">{translateText("No sales transactions found in database matching current filters.")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 font-bold uppercase text-[10px]">
-                  <th className="pb-2.5 pl-2">Date</th>
-                  <th className="pb-2.5">Business</th>
-                  <th className="pb-2.5">Item / Product</th>
-                  <th className="pb-2.5">Payment Mode</th>
-                  <th className="pb-2.5 pr-2 text-right">Amount</th>
+                  <th className="pb-2.5 pl-2">{translateText("Date")}</th>
+                  <th className="pb-2.5">{translateText("Business")}</th>
+                  <th className="pb-2.5">{translateText("Item / Product")}</th>
+                  <th className="pb-2.5">{translateText("Payment Mode")}</th>
+                  <th className="pb-2.5 pr-2 text-right">{translateText("Amount")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
@@ -1216,11 +1228,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ currentBusinessId = 'j
                       {BUSINESSES[s.businessId]?.name || s.businessId}
                     </td>
                     <td className="py-2.5 text-slate-700 dark:text-slate-300">
-                      {s.items?.[0]?.itemName || 'General Sale'}
+                      {displayProductName(s.items?.[0]?.itemName || '')}
                     </td>
                     <td className="py-2.5">
                       <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-[10px]">
-                        {s.paymentMethod || 'cash'}
+                        {s.paymentMethod || ''}
                       </span>
                     </td>
                     <td className="py-2.5 pr-2 text-right font-black text-emerald-600 dark:text-emerald-400">

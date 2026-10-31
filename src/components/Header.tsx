@@ -1,11 +1,11 @@
+import { translateText } from '../services/i18n';
 import React, { useState } from 'react';
 import {
   Menu,
+  ArrowLeft,
   Mic,
-  Shield,
   Sun,
   Moon,
-  Download,
   Candy,
   Utensils,
   Store,
@@ -15,7 +15,6 @@ import {
   Globe
 } from 'lucide-react';
 import { BusinessId, BUSINESSES } from '../types/database';
-import { usePWAInstall } from '../hooks/usePWAInstall';
 import { useTranslation } from '../services/i18n';
 import { LanguageSelector } from './LanguageSelector';
 
@@ -24,11 +23,12 @@ interface HeaderProps {
   onSelectBusiness: (id: BusinessId) => void;
   onOpenDrawer: () => void;
   onOpenVoiceOrb: () => void;
-  onOpenLockModal: () => void;
-  onOpenAPKModal: () => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
   isOnline: boolean;
+  onBack: () => void;
+  canGoBack: boolean;
+  showBackButton: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,13 +36,13 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectBusiness,
   onOpenDrawer,
   onOpenVoiceOrb,
-  onOpenLockModal,
-  onOpenAPKModal,
   theme,
   onToggleTheme,
-  isOnline
+  isOnline,
+  onBack,
+  canGoBack,
+  showBackButton
 }) => {
-  const { isInstallable, install } = usePWAInstall();
   const { t, lang, toggleLanguage } = useTranslation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -59,31 +59,34 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-950/80 backdrop-blur-2xl border-b border-slate-200/90 dark:border-amber-500/20 text-slate-900 dark:text-slate-100 shadow-xs transition-colors">
-      <div className="px-3 py-2.5 flex items-center justify-between gap-2 max-w-5xl mx-auto">
+    <header className="restored-header sticky top-0 z-30 bg-white/90 dark:bg-slate-950/80 backdrop-blur-2xl border-b border-slate-200/90 dark:border-amber-500/20 text-slate-900 dark:text-slate-100 shadow-xs transition-colors">
+      <div className="px-2 sm:px-3 py-2.5 flex items-center justify-between gap-1 sm:gap-2 max-w-5xl mx-auto">
         {/* Navigation Menu Toggle */}
         <button
           onClick={onOpenDrawer}
           className="p-2 rounded-xl bg-slate-100 dark:bg-slate-900/90 hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-600 dark:text-amber-400 border border-slate-200/90 dark:border-amber-500/20 transition active:scale-95 shadow-xs"
-          title="Open Menu Drawer"
+          title={translateText("Open Menu Drawer")}
         >
           <Menu className="w-5 h-5 stroke-[2.2]" />
         </button>
 
+        {showBackButton && <button onClick={onBack} disabled={!canGoBack} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-900/90 hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-600 dark:text-amber-400 border border-slate-200/90 dark:border-amber-500/20 transition disabled:opacity-40 disabled:cursor-not-allowed" title={lang === 'hi' ? 'वापस जाएँ' : 'Go back'} aria-label={lang === 'hi' ? 'वापस जाएँ' : 'Go back'}>
+          <ArrowLeft className="w-4 h-4" />
+        </button>}
+
         {/* Business Selector Dropdown */}
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative flex-1 min-w-0 max-w-xs">
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="w-full py-1.5 px-3 rounded-xl bg-slate-100/90 dark:bg-slate-900/90 border border-slate-300/80 dark:border-amber-500/30 flex items-center justify-between text-left shadow-xs transition hover:border-amber-500/60"
+            aria-label={lang === 'hi' ? 'कार्यक्षेत्र चुनें' : 'Choose workspace'}
+            aria-expanded={dropdownOpen}
+            className="w-full min-h-9 py-1.5 px-2 sm:px-3 rounded-xl bg-slate-100/90 dark:bg-slate-900/90 border border-slate-300/80 dark:border-amber-500/30 flex items-center justify-between text-left shadow-xs transition hover:border-amber-500/60"
           >
-            <div className="flex items-center gap-2 truncate">
-              {getBusinessIcon(currentBusiness.icon)}
-              <div>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="hidden min-[380px]:inline-flex">{getBusinessIcon(currentBusiness.icon)}</span>
+              <div className="min-w-0">
                 <div className="text-xs font-bold text-slate-900 dark:text-amber-300 truncate leading-tight">
-                  {currentBusiness.name}
-                </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-none">
-                  {currentBusiness.type}
+                  {translateText(currentBusiness.name)}
                 </div>
               </div>
             </div>
@@ -91,7 +94,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {dropdownOpen && (
-            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl border border-slate-200 dark:border-amber-500/30 rounded-2xl shadow-2xl py-1 z-50 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+            <div className="absolute top-full left-0 w-64 max-w-[calc(100vw-4rem)] mt-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl border border-slate-200 dark:border-amber-500/30 rounded-2xl shadow-2xl py-1 z-50 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
               {Object.values(BUSINESSES).map((bus) => (
                 <button
                   key={bus.id}
@@ -109,10 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
                     {getBusinessIcon(bus.icon)}
                     <div>
                       <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                        {bus.name}
-                      </div>
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                        {bus.type}
+                        {translateText(bus.name)}
                       </div>
                     </div>
                   </div>
@@ -123,7 +123,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right Actions */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5">
           {/* Premium Language Switcher Dropdown */}
           <LanguageSelector />
 
@@ -131,7 +131,8 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onToggleTheme}
             className="p-2 rounded-xl bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 transition shadow-xs"
-            title="Toggle Light/Dark Theme"
+            title={t('themeSwitchLabel')}
+            aria-label={t('themeSwitchLabel')}
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
           </button>
@@ -139,39 +140,12 @@ export const Header: React.FC<HeaderProps> = ({
           {/* AI Voice Orb Launcher */}
           <button
             onClick={onOpenVoiceOrb}
-            className="p-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-slate-950 font-bold shadow-md shadow-amber-500/25 transition active:scale-95 animate-pulse"
-            title="Launch Voice AI Assistant"
+            className="hidden sm:flex p-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-slate-950 font-bold shadow-md shadow-amber-500/25 transition active:scale-95"
+            title={translateText("Launch Voice AI Assistant")}
           >
             <Mic className="w-5 h-5 stroke-[2.5]" />
           </button>
 
-          {/* Android App Install / Backup */}
-          {isInstallable ? (
-            <button
-              onClick={install}
-              className="p-2 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition"
-              title="Install Android App"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              onClick={onOpenAPKModal}
-              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-900 text-amber-600 dark:text-amber-400 border border-slate-200 dark:border-amber-500/20 transition"
-              title="Android App Info & Backup"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* PIN Lock */}
-          <button
-            onClick={onOpenLockModal}
-            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-900 text-amber-600 dark:text-amber-400 border border-slate-200 dark:border-amber-500/20 transition"
-            title="Lock Security Access"
-          >
-            <Shield className="w-4 h-4" />
-          </button>
         </div>
       </div>
     </header>

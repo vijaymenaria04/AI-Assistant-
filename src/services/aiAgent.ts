@@ -2,6 +2,8 @@ import { db } from './db';
 import { voice } from './voice';
 import { androidAutomation } from './androidAutomation';
 import { BusinessId } from '../types/database';
+import { agentValidationError, isProgrammingRequest, requiresAgentConfirmation } from './agentSafety';
+import { parseLocalCommand } from './ruleParser';
 
 export interface ParsedAgentResult {
   action: string;
@@ -11,6 +13,7 @@ export interface ParsedAgentResult {
   speech_response: string;
   parameters: {
     amount?: number;
+    date?: string;
     item_name?: string;
     quantity?: number;
     unit?: string;
@@ -36,6 +39,17 @@ class AIAgentService {
     prompt: string,
     currentBusinessId: BusinessId = 'jain-sweets'
   ): Promise<{ result: ParsedAgentResult; executed: boolean }> {
+    if (isProgrammingRequest(prompt)) return { result: { action: 'UNKNOWN_QUERY', requires_owner_confirmation: false, speech_response: 'Programming assistance is not available in GopalAI.', parameters: {} }, executed: false };
+    const prepare = (result: ParsedAgentResult): ParsedAgentResult => {
+      if (!result || typeof result.action !== 'string') return { action: 'UNKNOWN_QUERY', requires_owner_confirmation: false, speech_response: 'I could not understand that request. Please provide more details.', parameters: {} };
+      result.parameters = result.parameters || {};
+      const error = agentValidationError(result);
+      if (error) return { action: 'UNKNOWN_QUERY', requires_owner_confirmation: false, speech_response: error, parameters: {} };
+      result.requires_owner_confirmation = requiresAgentConfirmation(result.action);
+      if (result.requires_owner_confirmation) result.speech_response = 'Please review and confirm this action. No changes have been made yet.';
+      if (result.action === 'UNKNOWN_QUERY') result.speech_response = 'I could not complete that request. Please provide more details or use the relevant app screen.';
+      return result;
+    };
     try {
       const response = await fetch('/api/ai-agent', {
         method: 'POST',
@@ -47,7 +61,7 @@ class AIAgentService {
       });
 
       const data = await response.json().catch(() => ({}));
-      const result: ParsedAgentResult = data.result || this.localFallbackParser(prompt, currentBusinessId);
+      const result: ParsedAgentResult = data.result || parseLocalCommand(prompt, currentBusinessId);
 
       // Fallback business matching if missing
       if (!result.business_id && result.business_name) {
@@ -61,67 +75,48 @@ class AIAgentService {
         result.business_id = currentBusinessId;
       }
 
-      return { result, executed: false };
+      return { result: prepare(result), executed: false };
     } catch (err) {
       console.warn('AI Processing Warning (using local parser):', err);
-      const fallback = this.localFallbackParser(prompt, currentBusinessId);
-      return { result: fallback, executed: false };
+      const fallback = parseLocalCommand(prompt, currentBusinessId);
+      return { result: prepare(fallback), executed: false };
     }
   }
 
+  // Quick bars must use the same confirmation path as the main assistant.
+  public async runQuickCommand(prompt: string, workspace: BusinessId, onRequestConfirmation?: (result: ParsedAgentResult) => void): Promise<string> {
+    const { result } = await this.processCommand(prompt, workspace);
+    if (result.requires_owner_confirmation) {
+      if (!onRequestConfirmation) return 'No action was taken. Open AI Assistant to review and confirm.';
+      onRequestConfirmation(result);
+      return 'Review the confirmation. No changes have been made yet.';
+    }
+    return this.executeAction(result);
+  }
+
   // Execute confirmed action in Database / Android System
-  public async executeAction(result: ParsedAgentResult): Promise<string> {
+  public async executeAction(result: ParsedAgentResult, approved = false): Promise<string> {
+    const validationError = agentValidationError(result);
+    if (validationError) throw new Error(validationError);
+    if (requiresAgentConfirmation(result.action) && !approved) throw new Error('Owner confirmation is required before this action.');
+    if (result.action === 'UNKNOWN_QUERY') return result.speech_response;
     const params = result.parameters || {};
     const busId = result.business_id || 'jain-sweets';
     let successMessage = '';
 
     switch (result.action) {
       case 'ADD_SALE': {
-        const amount = params.amount || 0;
-        const method = (params.payment_method as any) || 'cash';
-        const itemName = params.item_name || 'General Item';
-        const qty = params.quantity || 1;
-        const unit = params.unit || 'pcs';
-
-        await db.addSale({
-          businessId: busId,
-          amount,
-          date: new Date().toISOString().split('T')[0],
-          paymentMethod: method,
-          items: [
-            {
-              id: 'item_1',
-              itemName,
-              quantity: qty,
-              unit,
-              price: amount / Math.max(1, qty),
-              total: amount
-            }
-          ],
-          notes: params.notes || `Voice Sale Entry`
-        });
-
+        const saved = await db.addSale({ businessId: busId, amount: params.amount!, date: params.date!, paymentMethod: params.payment_method as 'cash' | 'upi' | 'online' | 'credit', items: [], notes: params.notes });
+        if (!(await db.getSales(busId)).some(s => s.id === saved.id)) throw new Error('Could not verify the saved sale. Please check Sales Management before retrying.');
         androidAutomation.playSoundEffect('success');
-        successMessage = `Sale of ₹${amount} saved successfully for ${result.business_name || busId}.`;
+        successMessage = `Sale of ₹${params.amount} saved for ${busId}.`;
         break;
       }
-
       case 'ADD_EXPENSE': {
-        const amount = params.amount || 0;
-        const cat = (params.category as any) || 'other';
-        const method = (params.payment_method as any) || 'cash';
-
-        await db.addExpense({
-          businessId: busId,
-          amount,
-          category: cat,
-          date: new Date().toISOString().split('T')[0],
-          paymentMethod: method,
-          notes: params.notes || `Voice Expense Entry`
-        });
-
+        const saved = await db.addExpense({ businessId: busId, amount: params.amount!, category: params.category as any, date: params.date!, paymentMethod: params.payment_method as 'cash' | 'upi' | 'bank' | 'credit', notes: params.notes });
+        if (!(await db.getExpenses(busId)).some(e => e.id === saved.id)) throw new Error('Could not verify the saved expense. Please check Expenses Management before retrying.');
         androidAutomation.playSoundEffect('success');
-        successMessage = `Expense of ₹${amount} (${cat.replace('_', ' ')}) recorded successfully.`;
+        successMessage = `Expense of ₹${params.amount} saved for ${busId}.`;
         break;
       }
 
@@ -165,64 +160,44 @@ class AIAgentService {
       }
 
       case 'ADD_REMINDER': {
-        const title = params.reminder_title || result.speech_response || 'Reminder';
-        const time = params.reminder_time || new Date(Date.now() + 3600000).toISOString();
-
-        await db.addReminder({
-          title,
-          dateTime: time,
-          priority: 'medium',
-          businessId: busId
-        });
-
-        androidAutomation.playSoundEffect('beep');
-        successMessage = `Reminder set: "${title}".`;
+        const saved = await db.addReminder({ title: params.reminder_title!, dateTime: params.reminder_time!, priority: 'medium', businessId: busId });
+        if (!(await db.getReminders()).some(r => r.id === saved.id)) throw new Error('Could not verify the reminder. Please check Reminders before retrying.');
+        successMessage = `Reminder saved: ${saved.title}. Background delivery depends on device support.`;
         break;
       }
 
       case 'CALL_CONTACT': {
-        const contact = params.contact_name || params.phone_number || '';
+        const contact = params.phone_number!;
         androidAutomation.initiatePhoneCall(contact);
-        successMessage = `Initiating phone call to ${contact}...`;
+        successMessage = `Dialer requested for ${contact}. Please check your device.`;
         break;
       }
 
       case 'OPEN_APP': {
         const appName = params.app_name || 'App';
         androidAutomation.openApp(appName);
-        successMessage = `Opening ${appName}...`;
+        successMessage = `Opening ${appName} was requested. Please check your device.`;
         break;
       }
 
       case 'SEARCH_WEB': {
         const query = params.query || '';
         androidAutomation.searchWeb(query);
-        successMessage = `Searching web for "${query}"...`;
+        successMessage = `Web search requested for "${query}". Please check your device.`;
         break;
       }
 
       case 'OPEN_MAPS': {
         const loc = params.location || '';
         androidAutomation.openMaps(loc);
-        successMessage = `Opening Google Maps for ${loc}...`;
+        successMessage = `Map requested for ${loc}. Please check your device.`;
         break;
       }
 
       case 'ADD_PERSONAL_TRANSACTION': {
-        const amount = params.amount || 0;
-        const type = (params.transaction_type as any) || 'expense';
-
-        await db.addPersonalTransaction({
-          type,
-          amount,
-          category: params.category || 'General',
-          date: new Date().toISOString().split('T')[0],
-          paymentMethod: 'upi',
-          notes: params.notes || 'Personal Transaction'
-        });
-
-        androidAutomation.playSoundEffect('success');
-        successMessage = `Personal ${type} of ₹${amount} saved.`;
+        const saved = await db.addPersonalTransaction({ type: params.transaction_type as 'income' | 'expense', amount: params.amount!, category: params.category!, date: params.date!, paymentMethod: params.payment_method as 'cash' | 'upi' | 'bank' | 'card', notes: params.notes });
+        if (!(await db.getPersonalTransactions()).some(t => t.id === saved.id)) throw new Error('Could not verify the personal transaction. Please check Personal before retrying.');
+        successMessage = `Personal ${saved.type} of ₹${saved.amount} saved.`;
         break;
       }
 
@@ -242,7 +217,9 @@ class AIAgentService {
         const shortage = Math.max(0, required - assigned);
         const busName = busId === 'jain-sweets' ? 'Jain Sweets' : busId === 'paan-bai' ? 'Paan Bai Canteen' : busId === 'kesarwadi' ? 'Kesarwadi Canteen' : 'Gopal Caterers';
 
-        if (shortage > 0) {
+        if (mp.length === 0) {
+          successMessage = `No manpower plan is recorded for ${busName}; shortage cannot be determined.`;
+        } else if (shortage > 0) {
           successMessage = `${busName} mein ${required} required staff ke mukable ${assigned} assigned hain. Total ${shortage} bande kam hain.`;
         } else {
           successMessage = `${busName} mein required staff poora hai (${assigned}/${required}). Koi shortage nahi hai.`;
@@ -314,95 +291,6 @@ class AIAgentService {
     return successMessage;
   }
 
-  // Basic regex fallback parser if network offline
-  private localFallbackParser(prompt: string, busId: BusinessId): ParsedAgentResult {
-    const lower = prompt.toLowerCase();
-    const amountMatch = lower.match(/(\d+)\s*(rupaye|rs|rupees|ki|ka)?/);
-    const amount = amountMatch ? parseInt(amountMatch[1], 10) : 0;
-
-    let targetBus = busId;
-    if (lower.includes('jain')) targetBus = 'jain-sweets';
-    else if (lower.includes('paan')) targetBus = 'paan-bai';
-    else if (lower.includes('kesar')) targetBus = 'kesarwadi';
-    else if (lower.includes('caterer') || lower.includes('gopal')) targetBus = 'gopal-caterers';
-
-    if (lower.includes('staff') && (lower.includes('kitne') || lower.includes('count'))) {
-      return {
-        action: 'QUERY_STAFF_COUNT',
-        business_id: targetBus,
-        requires_owner_confirmation: false,
-        speech_response: `Checking staff count for ${targetBus}...`,
-        parameters: {}
-      };
-    } else if (lower.includes('kam') || lower.includes('shortage') || lower.includes('bande')) {
-      return {
-        action: 'QUERY_STAFF_SHORTAGE',
-        business_id: targetBus,
-        requires_owner_confirmation: false,
-        speech_response: `Checking staff shortage for ${targetBus}...`,
-        parameters: {}
-      };
-    } else if (lower.includes('salary') || lower.includes('baaki') || lower.includes('advance')) {
-      return {
-        action: 'QUERY_PENDING_SALARY',
-        requires_owner_confirmation: false,
-        speech_response: `Checking pending salary and advances...`,
-        parameters: {}
-      };
-    } else if (lower.includes('waiter') || lower.includes('available') || lower.includes('catering')) {
-      return {
-        action: 'QUERY_CATERING_AVAILABILITY',
-        requires_owner_confirmation: false,
-        speech_response: `Checking catering staff availability...`,
-        parameters: {}
-      };
-    } else if (lower.includes('assign') || lower.includes('laga do')) {
-      return {
-        action: 'ASSIGN_CATERING_STAFF',
-        requires_owner_confirmation: true,
-        speech_response: `Assigning available staff to catering order. Confirm?`,
-        parameters: {}
-      };
-    } else if (lower.includes('sale') || lower.includes('becha') || lower.includes('bikri')) {
-      return {
-        action: 'ADD_SALE',
-        business_id: targetBus,
-        requires_owner_confirmation: true,
-        speech_response: `Recording sale of ₹${amount} for business. Confirm?`,
-        parameters: { amount }
-      };
-    } else if (lower.includes('kharch') || lower.includes('expense') || lower.includes('paisa gaya')) {
-      return {
-        action: 'ADD_EXPENSE',
-        business_id: targetBus,
-        requires_owner_confirmation: true,
-        speech_response: `Recording expense of ₹${amount}. Confirm?`,
-        parameters: { amount, category: 'other' }
-      };
-    } else if (lower.includes('call') || lower.includes('lagao')) {
-      const name = prompt.replace(/(call|lagao|ko|karo)/gi, '').trim();
-      return {
-        action: 'CALL_CONTACT',
-        requires_owner_confirmation: true,
-        speech_response: `Call ${name}?`,
-        parameters: { contact_name: name }
-      };
-    } else if (lower.includes('open') || lower.includes('kholo')) {
-      return {
-        action: 'OPEN_APP',
-        requires_owner_confirmation: false,
-        speech_response: `Opening application...`,
-        parameters: { app_name: prompt }
-      };
-    }
-
-    return {
-      action: 'UNKNOWN_QUERY',
-      requires_owner_confirmation: false,
-      speech_response: `Command received: "${prompt}". Please specify action.`,
-      parameters: {}
-    };
-  }
 }
 
 export const aiAgent = new AIAgentService();

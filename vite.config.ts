@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'icon.svg'],
+        includeAssets: ['gopalai-logo.png', 'gopalai-logo-192.png'],
         manifest: {
           id: '/',
           name: 'GopalAI Assistant',
@@ -24,14 +24,22 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
-              src: '/icon.svg',
-              sizes: '192x192 512x512',
-              type: 'image/svg+xml',
+              src: '/gopalai-logo-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: '/gopalai-logo.png',
+              sizes: '512x512',
+              type: 'image/png',
               purpose: 'any maskable'
             }
           ]
         },
         workbox: {
+          // Keep bundled Hindi fonts available when the installed app is offline.
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
         },
         devOptions: {
@@ -46,6 +54,8 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // Allow the Arena preview proxy to embed the app.
+      allowedHosts: ['.e2b.app'],
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

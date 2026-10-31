@@ -1,9 +1,60 @@
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
+import uiHindi from './uiHindi.json';
 
 export type Language = 'en' | 'hi';
 
 export const translations = {
   en: {
+    workforceTitle: 'Workforce & Staff Management',
+    workforceSubtitle: 'Staff roster, allocation, attendance, transfers and payroll.',
+    addStaff: 'Add Staff',
+    transferStaff: 'Transfer Staff',
+    workforceLocations: 'Workforce & Locations',
+    manpowerCatering: 'Manpower & Catering',
+    attendanceOvertime: 'Attendance & Overtime',
+    payrollStatements: 'Payroll & Statements',
+    noStaffWorkspace: 'No staff records found for this workspace',
+    cateringTitle: 'Gopal Caterers — Order & Staff Allocation',
+    cateringSubtitle: 'Manage catering bookings, guest counts, equipment, menus and staff assignments.',
+    voiceOrder: 'Voice Order Entry',
+    newCateringOrder: '+ New Catering Order',
+    cateringOrdersTab: 'Catering Orders',
+    allocationEngine: 'Staff Conflict & Allocation Engine',
+    noCateringOrders: 'No catering orders found',
+    alertsTitle: 'GopalAI Alerts & Notifications',
+    alertsSubtitle: 'Real-time System Alerts & Operational Reminders',
+    markAllRead: 'Mark All Read',
+    activeBusinessAccount: 'Active Business Account',
+    localOfflineReady: 'Local & Offline Ready',
+    homeDashboard: 'Home Dashboard',
+    aiAssistantVoice: 'AI Assistant (Voice)',
+    personalFinance: 'Personal',
+    tasksReminders: 'Tasks & Reminders',
+    combinedBusinessReport: 'Combined Business Report',
+    expensesManagement: 'Expenses Management',
+    purchasesStockIn: 'Purchases & Stock In',
+    inventoryManagement: 'Inventory Management',
+    suppliersLedger: 'Suppliers & Ledger',
+    paymentsLedger: 'Payments (Payables/Receivables)',
+    staffPayroll: 'Staff & Payroll',
+    cateringOrders: 'Gopal Caterers Orders',
+    reportsAnalytics: 'Reports & Analytics',
+    notificationJobs: 'Notifications & Alert Jobs',
+    settingsSecurity: 'Settings',
+    voiceAI: 'Voice AI',
+    catering: 'Catering',
+    appLanguage: 'App Translation Language',
+    currentTheme: 'Current theme',
+    lightMode: 'Light mode',
+    darkMode: 'Dark mode',
+    ownerProfile: 'Owner Profile & Contact Info',
+    ownerName: 'Owner Name',
+    phoneContactLabel: 'Phone Contact',
+    emailAddress: 'Email Address',
+    saveProfile: 'Save Profile',
+    securitySettings: 'Security & Access',
+    themeSwitchLabel: 'Switch theme',
+    selectLanguage: 'Select App Language',
     // Header & Status
     appName: 'GopalAI Assistant',
     ownerAccess: 'Owner Access • Android System',
@@ -26,7 +77,6 @@ export const translations = {
     personal: 'Personal',
     notifications: 'Alerts',
     settings: 'Settings',
-    backup: 'Backup',
     combined: 'Combined Report',
     jainSweets: 'Jain Sweets',
     paanBai: 'Paan Bai Canteen',
@@ -165,7 +215,7 @@ export const translations = {
     noStaffRegistered: 'No staff members registered',
 
     // Personal Finance View
-    personalFinanceTitle: 'Personal Finance & Wallet',
+    personalFinanceTitle: 'Personal',
     ownerPrivateAccounting: 'Owner Private Accounting',
     addTransactionBtn: 'Add Transaction',
     totalIncome: 'Total Income',
@@ -206,7 +256,7 @@ export const translations = {
 
     // Settings View
     settingsTitle: 'Settings & Privacy',
-    preferencesSecurity: 'Preferences, PIN Security & App Controls',
+    preferencesSecurity: 'Preferences & App Controls',
     appearanceTheme: 'Appearance Theme',
     toggleThemeBtn: 'Toggle Theme',
     changePin: 'Change 4-Digit Owner Security PIN',
@@ -226,15 +276,58 @@ export const translations = {
     off: 'Off',
     aiResponseLabel: 'AI Response:',
 
-    // Backup & APK Modal
-    appBackupTitle: 'Free Android App & Storage',
-    offlinePwaDesc: 'GopalAI Assistant runs as a full offline-capable Android Progressive Web App (PWA). You can install it on your mobile home screen.',
-    exportBackupBtn: 'Export Backup',
-    restoreDataBtn: 'Restore Data',
-    backupSuccessMsg: 'Backup exported successfully to JSON!',
-    gotIt: 'Got it'
   },
   hi: {
+    workforceTitle: 'कार्यबल और स्टाफ प्रबंधन',
+    workforceSubtitle: 'स्टाफ सूची, आवंटन, उपस्थिति, स्थानांतरण और वेतन।',
+    addStaff: 'स्टाफ जोड़ें',
+    transferStaff: 'स्टाफ स्थानांतरित करें',
+    workforceLocations: 'कार्यबल और स्थान',
+    manpowerCatering: 'जनशक्ति और कैटरिंग',
+    attendanceOvertime: 'उपस्थिति और ओवरटाइम',
+    payrollStatements: 'वेतन और विवरण',
+    noStaffWorkspace: 'इस व्यापार में कोई स्टाफ रिकॉर्ड नहीं मिला',
+    cateringTitle: 'गोपाल कैटरर्स — ऑर्डर और स्टाफ आवंटन',
+    cateringSubtitle: 'कैटरिंग बुकिंग, मेहमानों की संख्या, उपकरण, मेनू और स्टाफ प्रबंधित करें।',
+    voiceOrder: 'वॉयस से ऑर्डर दर्ज करें',
+    newCateringOrder: '+ नया कैटरिंग ऑर्डर',
+    cateringOrdersTab: 'कैटरिंग ऑर्डर',
+    allocationEngine: 'स्टाफ आवंटन और टकराव',
+    noCateringOrders: 'कोई कैटरिंग ऑर्डर नहीं मिला',
+    alertsTitle: 'गोपाल AI अलर्ट और सूचनाएं',
+    alertsSubtitle: 'रियल-टाइम सिस्टम अलर्ट और रिमाइंडर',
+    markAllRead: 'सभी पढ़ा हुआ चिह्नित करें',
+    activeBusinessAccount: 'सक्रिय व्यापार खाता',
+    localOfflineReady: 'स्थानीय और ऑफलाइन उपलब्ध',
+    homeDashboard: 'होम डैशबोर्ड',
+    aiAssistantVoice: 'AI असिस्टेंट (वॉयस)',
+    personalFinance: 'व्यक्तिगत',
+    tasksReminders: 'कार्य और रिमाइंडर',
+    combinedBusinessReport: 'संयुक्त व्यापार रिपोर्ट',
+    expensesManagement: 'खर्च प्रबंधन',
+    purchasesStockIn: 'खरीद और स्टॉक',
+    inventoryManagement: 'इन्वेंट्री प्रबंधन',
+    suppliersLedger: 'सप्लायर और खाता',
+    paymentsLedger: 'भुगतान और बकाया',
+    staffPayroll: 'स्टाफ और वेतन',
+    cateringOrders: 'गोपाल कैटरर्स ऑर्डर',
+    reportsAnalytics: 'रिपोर्ट और विश्लेषण',
+    notificationJobs: 'सूचनाएं और अलर्ट',
+    settingsSecurity: 'सेटिंग्स',
+    voiceAI: 'वॉयस AI',
+    catering: 'कैटरिंग',
+    appLanguage: 'ऐप की भाषा',
+    currentTheme: 'वर्तमान थीम',
+    lightMode: 'लाइट मोड',
+    darkMode: 'डार्क मोड',
+    ownerProfile: 'मालिक का प्रोफाइल और संपर्क',
+    ownerName: 'मालिक का नाम',
+    phoneContactLabel: 'फोन नंबर',
+    emailAddress: 'ईमेल पता',
+    saveProfile: 'प्रोफाइल सहेजें',
+    securitySettings: 'सुरक्षा और एक्सेस',
+    themeSwitchLabel: 'थीम बदलें',
+    selectLanguage: 'ऐप की भाषा चुनें',
     // Header & Status
     appName: 'गोपाल AI असिस्टेंट',
     ownerAccess: 'मालिक एक्सेस • एंड्रॉइड सिस्टम',
@@ -257,7 +350,6 @@ export const translations = {
     personal: 'व्यक्तिगत',
     notifications: 'अलर्ट',
     settings: 'सेटिंग्स',
-    backup: 'बैकअप',
     combined: 'संयुक्त रिपोर्ट',
     jainSweets: 'जैन स्वीट्स',
     paanBai: 'पान बाई कैंटीन',
@@ -396,7 +488,7 @@ export const translations = {
     noStaffRegistered: 'कोई स्टाफ सदस्य पंजीकृत नहीं है',
 
     // Personal Finance View
-    personalFinanceTitle: 'व्यक्तिगत वित्त एवं वॉलेट',
+    personalFinanceTitle: 'व्यक्तिगत',
     ownerPrivateAccounting: 'मालिक का निजी खाता',
     addTransactionBtn: 'लेनदेन जोड़ें',
     totalIncome: 'कुल आय (Income)',
@@ -437,7 +529,7 @@ export const translations = {
 
     // Settings View
     settingsTitle: 'सेटिंग्स एवं गोपनीयता',
-    preferencesSecurity: 'प्राथमिकताएं, PIN सुरक्षा एवं ऐप नियंत्रण',
+    preferencesSecurity: 'प्राथमिकताएं एवं ऐप नियंत्रण',
     appearanceTheme: 'थीम (Theme)',
     toggleThemeBtn: 'थीम बदलें',
     changePin: '4-अंकीय मालिक सुरक्षा PIN बदलें',
@@ -457,46 +549,39 @@ export const translations = {
     off: 'बंद',
     aiResponseLabel: 'AI उत्तर:',
 
-    // Backup & APK Modal
-    appBackupTitle: 'मुफ्त एंड्रॉइड ऐप एवं स्टोरेज',
-    offlinePwaDesc: 'गोपाल AI असिस्टेंट ऑफ़लाइन एंड्रॉइड ऐप (PWA) के रूप में चलता है।',
-    exportBackupBtn: 'बैकअप एक्सपोर्ट करें',
-    restoreDataBtn: 'डेटा रिस्टोर करें',
-    backupSuccessMsg: 'बैकअप JSON में एक्सपोर्ट हो गया!',
-    gotIt: 'ठीक है'
   }
 };
 
+// Each launch starts in English; language changes apply for the current session.
 let currentLang: Language = 'en';
-const listeners: Set<() => void> = new Set();
+const listeners = new Set<() => void>();
+
+function updateDocumentLanguage() {
+  if (typeof document !== 'undefined') document.documentElement.lang = currentLang;
+}
+updateDocumentLanguage();
 
 export const i18n = {
   getLanguage: (): Language => currentLang,
   setLanguage: (lang: Language) => {
     currentLang = lang;
+    updateDocumentLanguage();
     listeners.forEach((cb) => cb());
   },
-  t: (key: keyof typeof translations.en): string => {
-    return translations[currentLang]?.[key] || translations.en[key] || key;
-  },
+  t: (key: keyof typeof translations.en): string => translations[currentLang][key] || translations.en[key],
   subscribe: (cb: () => void) => {
     listeners.add(cb);
-    return () => listeners.delete(cb);
+    return () => { listeners.delete(cb); };
   }
 };
 
+// Translate fixed interface copy only; user-entered names, notes and values are never translated.
+export function translateText(text: string): string {
+  return currentLang === 'hi' ? (uiHindi as Record<string, string>)[text] ?? text : text;
+}
+
 export function useTranslation() {
-  const [lang, setLang] = useState<Language>(i18n.getLanguage());
-
-  useEffect(() => {
-    const unsub = i18n.subscribe(() => {
-      setLang(i18n.getLanguage());
-    });
-    return () => {
-      unsub();
-    };
-  }, []);
-
+  const lang = useSyncExternalStore(i18n.subscribe, i18n.getLanguage, () => 'en');
   return {
     t: i18n.t,
     lang,

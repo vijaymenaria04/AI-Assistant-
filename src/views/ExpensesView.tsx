@@ -1,3 +1,5 @@
+import { localDate } from '../services/localDate';
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import { TrendingDown, Plus, Tag, Building2, Search } from 'lucide-react';
 import { db } from '../services/db';
@@ -14,7 +16,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [targetBusinessId, setTargetBusinessId] = useState<BusinessId>(
-    currentBusinessId === 'personal' ? 'jain-sweets' : currentBusinessId
+    currentBusinessId
   );
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('raw_materials');
@@ -29,9 +31,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
 
   useEffect(() => {
     setSelectedBusinessId(currentBusinessId);
-    if (currentBusinessId !== 'personal') {
-      setTargetBusinessId(currentBusinessId);
-    }
+    setTargetBusinessId(currentBusinessId);
   }, [currentBusinessId]);
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
       businessId: targetBusinessId,
       amount: amt,
       category,
-      date: new Date().toISOString().split('T')[0],
+      date: localDate(),
       paymentMethod,
       notes: notes.trim() || undefined
     });
@@ -77,7 +77,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-extrabold text-rose-600 dark:text-rose-400">{t('expenseManagement')}</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Track operating expenses, raw material costs, rent & utility bills</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{translateText("Track operating expenses, raw material costs, rent & utility bills")}</p>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
@@ -91,18 +91,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
       {/* Workspace Selector Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
         {[
-          { id: 'jain-sweets', name: 'Jain Sweets', color: 'text-amber-500' },
-          { id: 'paan-bai', name: 'Paan Bai Canteen', color: 'text-emerald-500' },
-          { id: 'kesarwadi', name: 'Kesarwadi Canteen', color: 'text-orange-500' },
-          { id: 'gopal-caterers', name: 'Gopal Caterers', color: 'text-purple-500' },
-          { id: 'personal', name: 'Personal Wallet', color: 'text-blue-500' },
-          { id: 'all', name: 'All Workspaces', color: 'text-indigo-500' }
+          { id: 'jain-sweets', name: translateText('Jain Sweets'), color: 'text-amber-500' },
+          { id: 'paan-bai', name: translateText('Paan Bai Canteen'), color: 'text-emerald-500' },
+          { id: 'kesarwadi', name: translateText('Kesarwadi Canteen'), color: 'text-orange-500' },
+          { id: 'gopal-caterers', name: translateText('Gopal Caterers'), color: 'text-purple-500' },
+          { id: 'personal', name: translateText('Personal'), color: 'text-blue-500' },
+          { id: 'all', name: translateText('All Workspaces'), color: 'text-indigo-500' }
         ].map((biz) => {
           const isActive = selectedBusinessId === biz.id;
           return (
             <button
               key={biz.id}
-              onClick={() => setSelectedBusinessId(biz.id as any)}
+              onClick={() => {
+                if (biz.id !== selectedBusinessId && showAddForm && !window.confirm(translateText('Change workspace for the open form? Review its target before saving.'))) return;
+                setSelectedBusinessId(biz.id as BusinessId | 'all');
+                if (biz.id !== 'all') setTargetBusinessId(biz.id as BusinessId);
+              }}
               className={`py-2 px-3.5 rounded-xl font-bold text-xs flex items-center gap-2 whitespace-nowrap transition ${
                 isActive
                   ? 'bg-rose-500 text-white shadow'
@@ -135,17 +139,17 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Workspace*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Workspace*")}</label>
               <select
                 value={targetBusinessId}
                 onChange={(e) => setTargetBusinessId(e.target.value as BusinessId)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="jain-sweets">Jain Sweets</option>
-                <option value="paan-bai">Paan Bai Canteen</option>
-                <option value="kesarwadi">Kesarwadi Canteen</option>
-                <option value="gopal-caterers">Gopal Caterers</option>
-                <option value="personal">Personal Finance</option>
+                <option value="jain-sweets">{translateText("Jain Sweets")}</option>
+                <option value="paan-bai">{translateText("Paan Bai Canteen")}</option>
+                <option value="kesarwadi">{translateText("Kesarwadi Canteen")}</option>
+                <option value="gopal-caterers">{translateText("Gopal Caterers")}</option>
+                <option value="personal">{translateText("Personal")}</option>
               </select>
             </div>
             <div>
@@ -155,7 +159,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="e.g. 1200"
+                placeholder={translateText("e.g. 1200")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -185,8 +189,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
               >
                 <option value="cash">{t('cash')}</option>
                 <option value="upi">{t('upi')}</option>
-                <option value="bank">Bank Transfer</option>
-                <option value="credit">Credit / Payable</option>
+                <option value="bank">{translateText("Bank Transfer")}</option>
+                <option value="credit">{translateText("Credit / Payable")}</option>
               </select>
             </div>
             <div className="sm:col-span-2">
@@ -195,7 +199,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
                 type="text"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. Milk bill / Sugar stock purchase"
+                placeholder={translateText("e.g. Milk bill / Sugar stock purchase")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -225,7 +229,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search expense by category or notes..."
+          placeholder={translateText("Search expense by category or notes...")}
           className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
         />
       </div>
@@ -236,7 +240,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
           <div className="p-10 text-center rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-2 shadow-sm">
             <TrendingDown className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto" />
             <div className="text-sm font-semibold text-slate-800 dark:text-slate-300">{t('noTransactionsYet')}</div>
-            <p className="text-xs text-slate-500">Add operational costs using voice command or the form above.</p>
+            <p className="text-xs text-slate-500">{translateText("Add operational costs using voice command or the form above.")}</p>
           </div>
         ) : (
           filteredExpenses.map((e) => {
@@ -255,8 +259,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
                       {bizInfo?.name}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Date: {e.date} {e.notes ? `• ${e.notes}` : ''}
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{translateText("Date:") + " "}{e.date} {e.notes ? `• ${e.notes}` : ''}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -264,7 +267,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ currentBusinessId })
                   <button
                     onClick={() => db.deleteExpense(e.id)}
                     className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 transition"
-                    title="Delete Expense"
+                    title={translateText("Delete Expense")}
                   >
                     <TrendingDown className="w-3.5 h-3.5" />
                   </button>

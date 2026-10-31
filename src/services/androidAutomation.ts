@@ -1,3 +1,5 @@
+import { db } from './db';
+
 export interface AndroidActionPayload {
   type: 'CALL' | 'OPEN_APP' | 'SEARCH' | 'MAPS' | 'REMINDER' | 'SHARE';
   target: string;
@@ -96,7 +98,8 @@ class AndroidAutomationService {
   // Push system browser / Android notification
   public async showSystemNotification(title: string, message: string, icon?: string): Promise<boolean> {
     try {
-      if (!('Notification' in window)) return false;
+      const settings = await db.getSettings();
+      if (settings.notificationsEnabled === false || !('Notification' in window)) return false;
       if (Notification.permission === 'granted') {
         new Notification(title, { body: message, icon: icon || '/favicon.ico' });
         return true;

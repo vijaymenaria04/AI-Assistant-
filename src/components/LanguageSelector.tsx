@@ -28,7 +28,7 @@ const UKFlag = () => (
 );
 
 export const LanguageSelector: React.FC = () => {
-  const { lang, setLanguage } = useTranslation();
+  const { lang, setLanguage, t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -52,18 +52,20 @@ export const LanguageSelector: React.FC = () => {
       {/* Trigger Pill Button matching exact screenshot styling */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 dark:bg-slate-950/90 text-white border-2 border-amber-400 dark:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)] hover:shadow-[0_0_18px_rgba(245,158,11,0.6)] font-bold text-xs transition-all active:scale-95"
-        title="Select App Language"
+        className="language-trigger flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-slate-950/90 text-slate-900 dark:text-white border-2 border-amber-500 dark:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)] hover:shadow-[0_0_18px_rgba(245,158,11,0.6)] font-bold text-xs transition-all active:scale-95"
+        title={t('selectLanguage')}
+        aria-label={t('selectLanguage')}
+        aria-expanded={isOpen}
       >
-        <div className="flex items-center gap-0.5 text-amber-400">
+        <div className="flex items-center gap-0.5 text-amber-700 dark:text-amber-400">
           <Globe className="w-4 h-4 stroke-[2.2]" />
           <span className="text-[10px] font-extrabold tracking-tighter">Aa</span>
         </div>
-        <span className="w-px h-3.5 bg-amber-400/50" />
-        <span className="font-black tracking-wide text-xs text-amber-300">
+        <span className="w-px h-3.5 bg-amber-600/40 dark:bg-amber-400/50" />
+        <span className="font-black tracking-wide text-xs text-amber-800 dark:text-amber-300">
           {lang === 'hi' ? 'HI' : 'EN'}
         </span>
-        <ChevronDown className={`w-3.5 h-3.5 text-amber-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-amber-700 dark:text-amber-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Dropdown Popover */}
@@ -72,13 +74,13 @@ export const LanguageSelector: React.FC = () => {
           {/* Top Triangle Pointer pointing up to button */}
           <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[6px] border-b-amber-400 z-10 -mb-[1px]" />
 
-          <div className="w-64 bg-slate-950/95 dark:bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-400 rounded-2xl shadow-[0_0_25px_rgba(245,158,11,0.35)] p-3.5 text-white">
+          <div className="language-popover w-64 bg-white/95 dark:bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-400 rounded-2xl shadow-[0_0_25px_rgba(245,158,11,0.35)] p-3.5 text-slate-900 dark:text-white">
             {/* Header */}
-            <div className="flex items-center gap-2 pb-3 mb-2.5 border-b border-slate-800/80">
-              <div className="p-1.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <div className="flex items-center gap-2 pb-3 mb-2.5 border-b border-slate-200 dark:border-slate-800/80">
+              <div className="p-1.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                 <Globe className="w-4 h-4" />
               </div>
-              <span className="font-extrabold text-amber-300 text-sm tracking-tight">
+              <span className="font-extrabold text-amber-800 dark:text-amber-300 text-sm tracking-tight">
                 {lang === 'hi' ? 'भाषा चुनें' : 'Select Language'}
               </span>
             </div>
@@ -88,17 +90,18 @@ export const LanguageSelector: React.FC = () => {
               {/* Hindi Option */}
               <button
                 onClick={() => handleSelect('hi')}
+                aria-pressed={lang === 'hi'}
                 className={`w-full p-2.5 rounded-xl flex items-center justify-between text-left transition-all ${
                   lang === 'hi'
                     ? 'border-2 border-amber-400 bg-gradient-to-r from-amber-500/25 to-yellow-600/15 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                    : 'border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 hover:border-amber-500/40'
+                    : 'border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 hover:bg-amber-50 dark:hover:bg-slate-800/80 hover:border-amber-500/40'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <IndiaFlag />
                   <div>
-                    <div className="font-bold text-sm text-white leading-tight">हिन्दी</div>
-                    <div className="text-[11px] text-slate-400 leading-none mt-0.5">Hindi</div>
+                    <div className="font-bold text-sm text-slate-900 dark:text-white leading-tight">हिन्दी</div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-none mt-0.5">Hindi</div>
                   </div>
                 </div>
 
@@ -107,24 +110,25 @@ export const LanguageSelector: React.FC = () => {
                     <Check className="w-3.5 h-3.5 stroke-[3]" />
                   </div>
                 ) : (
-                  <div className="w-5 h-5 rounded-full border border-slate-600" />
+                  <div className="w-5 h-5 rounded-full border border-slate-400 dark:border-slate-600" />
                 )}
               </button>
 
               {/* English Option */}
               <button
                 onClick={() => handleSelect('en')}
+                aria-pressed={lang === 'en'}
                 className={`w-full p-2.5 rounded-xl flex items-center justify-between text-left transition-all ${
                   lang === 'en'
                     ? 'border-2 border-amber-400 bg-gradient-to-r from-amber-500/25 to-yellow-600/15 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                    : 'border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 hover:border-amber-500/40'
+                    : 'border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 hover:bg-amber-50 dark:hover:bg-slate-800/80 hover:border-amber-500/40'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <UKFlag />
                   <div>
-                    <div className="font-bold text-sm text-white leading-tight">English</div>
-                    <div className="text-[11px] text-slate-400 leading-none mt-0.5">English</div>
+                    <div className="font-bold text-sm text-slate-900 dark:text-white leading-tight">English</div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-none mt-0.5">English</div>
                   </div>
                 </div>
 
@@ -133,7 +137,7 @@ export const LanguageSelector: React.FC = () => {
                     <Check className="w-3.5 h-3.5 stroke-[3]" />
                   </div>
                 ) : (
-                  <div className="w-5 h-5 rounded-full border border-slate-600" />
+                  <div className="w-5 h-5 rounded-full border border-slate-400 dark:border-slate-600" />
                 )}
               </button>
             </div>

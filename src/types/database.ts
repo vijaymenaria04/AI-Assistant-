@@ -44,8 +44,8 @@ export const BUSINESSES: Record<BusinessId, BusinessInfo> = {
   },
   'personal': {
     id: 'personal',
-    name: 'Personal Finance',
-    type: 'Owner Private Account',
+    name: 'Personal',
+    type: 'Personal tasks and life',
     icon: 'UserCheck',
     color: '#3B82F6', // Blue
     bgGradient: 'from-blue-500/20 to-indigo-600/10'
@@ -138,6 +138,7 @@ export interface InventoryItem {
   stockQuantity: number;
   unit: string;
   minStockLevel: number;
+  reorderAlertEnabled?: boolean;
   expiryDate?: string;
   lastUpdated: string;
 }
@@ -415,8 +416,9 @@ export interface SyncQueueItem {
 export interface AppSettings {
   theme: 'dark' | 'light';
   language: 'hinglish' | 'hindi' | 'english';
-  pinEnabled: boolean;
-  pinHash: string; // 4-digit PIN default '1234'
+  // Legacy backup fields; the app no longer offers a lock.
+  pinEnabled?: boolean;
+  pinHash?: string;
   biometricEnabled?: boolean;
   voiceGender: 'female' | 'male';
   voiceSpeed: number;

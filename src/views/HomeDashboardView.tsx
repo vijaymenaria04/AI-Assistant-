@@ -1,3 +1,5 @@
+import { isLowStock } from '../services/inventory';
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import {
   ShoppingBag,
@@ -37,7 +39,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
   onNavigate,
   onOpenVoiceOrb
 }) => {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [selectedWorkspace, setSelectedWorkspace] = useState<BusinessId>(currentBusinessId);
   const [sales, setSales] = useState<Sale[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -81,7 +83,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
   const totalSales = sales.reduce((sum, s) => sum + s.amount, 0);
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   const totalStockCount = inventory.length;
-  const lowStockCount = inventory.filter((item) => item.stockQuantity <= item.minStockLevel).length;
+  const lowStockCount = inventory.filter((item) => isLowStock(item)).length;
   const totalPendingPayables = suppliers.reduce((sum, sup) => sum + sup.totalPayable, 0);
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -127,9 +129,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
     <div className="p-4 space-y-5 max-w-5xl mx-auto pb-24">
       {/* 1. Workspace Selector Strip */}
       <div className="space-y-1.5">
-        <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1">
-          Select Workspace
-        </div>
+        <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1">{translateText("Select Workspace")}</div>
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
           {Object.values(BUSINESSES).map((bus) => (
             <button
@@ -142,7 +142,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               }`}
             >
               {getWorkspaceIcon(bus.id)}
-              <span>{bus.name}</span>
+              <span>{translateText(bus.name)}</span>
             </button>
           ))}
         </div>
@@ -154,14 +154,11 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
               <Sparkles className="w-4 h-4 text-amber-500 animate-spin" />
-              <span>GopalAI Central Assistant</span>
+              <span>{translateText("GopalAI Central Assistant")}</span>
             </div>
-            <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
-              AI Agent ({BUSINESSES[selectedWorkspace]?.name})
+            <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100">{translateText("AI Agent (")}{translateText(BUSINESSES[selectedWorkspace]?.name || selectedWorkspace)})
             </h1>
-            <p className="text-xs text-slate-700 dark:text-slate-300">
-              Speak or type commands in Hindi or English (e.g., "Add sale 5000 in cash", "Kharcha 800 rupees").
-            </p>
+            <p className="text-xs text-slate-700 dark:text-slate-300">{translateText("Speak or type commands in Hindi or English (e.g., \"Add sale 5000 in cash\", \"Kharcha 800 rupees\").")}</p>
           </div>
 
           <button
@@ -169,7 +166,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             className="py-3 px-5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-500 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/30 hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-2 shrink-0"
           >
             <Mic className="w-5 h-5 stroke-[2.5] animate-pulse" />
-            <span>Launch Voice Assistant</span>
+            <span>{translateText("Launch Voice Assistant")}</span>
           </button>
         </div>
 
@@ -179,7 +176,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             type="text"
             value={commandInput}
             onChange={(e) => setCommandInput(e.target.value)}
-            placeholder="Type command e.g., 'Jain Sweets me 12000 sale add karo'..."
+            placeholder={translateText("Type command e.g., 'Jain Sweets me 12000 sale add karo'...")}
             className="flex-1 bg-white/95 dark:bg-slate-950 border border-amber-500/40 rounded-2xl px-4 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
           />
           <button
@@ -188,7 +185,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             className="py-2.5 px-4 rounded-2xl bg-slate-900 dark:bg-amber-500 text-amber-400 dark:text-slate-950 font-bold text-xs hover:brightness-110 disabled:opacity-50 transition flex items-center justify-center gap-1.5 shadow-md"
           >
             {isProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            <span className="hidden sm:inline">Send</span>
+            <span className="hidden sm:inline">{translateText("Send")}</span>
           </button>
         </form>
 
@@ -213,8 +210,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             ₹{totalSales.toLocaleString('en-IN')}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-            {sales.length} transactions
-          </div>
+            {sales.length}{" " + translateText("transactions")}</div>
         </div>
 
         {/* Actual Expenses */}
@@ -229,30 +225,29 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             ₹{totalExpenses.toLocaleString('en-IN')}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-            {expenses.length} entries
-          </div>
+            {expenses.length}{" " + translateText("entries")}</div>
         </div>
 
         {/* Stock Items */}
         <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
-            <span>Stock Items</span>
+            <span>{translateText("Stock Items")}</span>
             <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
               <Boxes className="w-4 h-4" />
             </div>
           </div>
           <div className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400">
-            {totalStockCount} <span className="text-xs font-normal text-slate-500">items</span>
+            {totalStockCount} <span className="text-xs font-normal text-slate-500">{translateText("items")}</span>
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-            {lowStockCount > 0 ? `${lowStockCount} low stock` : 'Stock updated'}
+            {lowStockCount > 0 ? (lang === 'hi' ? `${lowStockCount} कम स्टॉक` : `${lowStockCount} low stock`) : translateText('Stock updated')}
           </div>
         </div>
 
         {/* Pending Payments */}
         <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
-            <span>Pending Payables</span>
+            <span>{translateText("Pending Payables")}</span>
             <div className="p-1.5 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
               <CreditCard className="w-4 h-4" />
             </div>
@@ -260,9 +255,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <div className="text-xl font-extrabold text-orange-600 dark:text-orange-400">
             ₹{totalPendingPayables.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-            Supplier dues
-          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">{translateText("Supplier dues")}</div>
         </div>
       </div>
 
@@ -306,8 +299,8 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               <Boxes className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">Add Stock</div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400">Inventory Entry</div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{translateText("Add Stock")}</div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">{translateText("Inventory Entry")}</div>
             </div>
           </button>
 
@@ -319,8 +312,8 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               <Clock className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">Add Reminder</div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400">Tasks & Alerts</div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{translateText("Add Reminder")}</div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">{translateText("Tasks & Alerts")}</div>
             </div>
           </button>
         </div>
@@ -333,7 +326,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-slate-100">
             <div className="flex items-center gap-2">
               <CheckSquare className="w-4 h-4 text-amber-500" />
-              <span>Today's Scheduled Tasks</span>
+              <span>{translateText("Today's Scheduled Tasks")}</span>
             </div>
             <button onClick={() => onNavigate('tasks')} className="text-amber-600 dark:text-amber-400 hover:underline">
               {t('viewAll')}
@@ -341,21 +334,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           </div>
 
           {todayTasks.length === 0 && todayReminders.length === 0 ? (
-            <div className="p-6 text-center rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">
-              No tasks or reminders scheduled for today.
-            </div>
+            <div className="p-6 text-center rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">{translateText("No tasks or reminders scheduled for today.")}</div>
           ) : (
             <div className="space-y-2">
               {todayTasks.slice(0, 3).map((task) => (
                 <div key={task.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-800 dark:text-slate-200">
                   <span className="font-semibold">{task.title}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 font-bold">Task</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 font-bold">{translateText("Task")}</span>
                 </div>
               ))}
               {todayReminders.slice(0, 2).map((rem) => (
                 <div key={rem.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-800 dark:text-slate-200">
                   <span className="font-semibold">{rem.title}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-600 font-bold">Reminder</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-600 font-bold">{translateText("Reminder")}</span>
                 </div>
               ))}
             </div>
@@ -365,7 +356,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
         {/* Recent Transactions */}
         <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 space-y-3 shadow-xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-slate-100">
-            <span>Recent Transactions ({BUSINESSES[selectedWorkspace]?.name})</span>
+            <span>{translateText("Recent Transactions (")}{translateText(BUSINESSES[selectedWorkspace]?.name || selectedWorkspace)})</span>
             <button onClick={() => onNavigate('sales')} className="text-amber-600 dark:text-amber-400 hover:underline">
               {t('viewAll')}
             </button>
@@ -381,7 +372,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
                 <div key={s.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-200">Sale ({s.paymentMethod.toUpperCase()})</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-200">{translateText("Sale (")}{s.paymentMethod.toUpperCase()})</span>
                   </div>
                   <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">+₹{s.amount}</span>
                 </div>
@@ -390,7 +381,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
                 <div key={e.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-200">Expense ({e.category.replace('_', ' ')})</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-200">{translateText("Expense (")}{e.category.replace('_', ' ')})</span>
                   </div>
                   <span className="text-xs font-extrabold text-rose-600 dark:text-rose-400">-₹{e.amount}</span>
                 </div>
