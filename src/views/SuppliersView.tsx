@@ -1,3 +1,4 @@
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import {
   Users,
@@ -22,16 +23,17 @@ import {
 import { db } from '../services/db';
 import { BusinessId, BUSINESSES, Supplier, SupplierPayment, Purchase } from '../types/database';
 import { androidAutomation } from '../services/androidAutomation';
-import { aiAgent } from '../services/aiAgent';
+import { aiAgent, type ParsedAgentResult } from '../services/aiAgent';
 import { useTranslation } from '../services/i18n';
 
 interface SuppliersViewProps {
   currentBusinessId: BusinessId;
+  onRequestConfirmation?: (result: ParsedAgentResult) => void;
 }
 
 type StatusFilter = 'all' | 'pending' | 'settled';
 
-export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId }) => {
+export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId, onRequestConfirmation }) => {
   const { t } = useTranslation();
   const [selectedBusinessId, setSelectedBusinessId] = useState<BusinessId | 'all'>(currentBusinessId);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -48,13 +50,15 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
 
   // Form states
   const [targetBusinessId, setTargetBusinessId] = useState<BusinessId>(
-    currentBusinessId === 'personal' ? 'jain-sweets' : currentBusinessId
+    currentBusinessId
   );
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
 
   // Payment Form
   const [payAmount, setPayAmount] = useState('');
+  const [payError, setPayError] = useState('');
+  const [paySaving, setPaySaving] = useState(false);
   const [payMethod, setPayMethod] = useState<'cash' | 'upi' | 'bank' | 'cheque'>('upi');
   const [payNotes, setPayNotes] = useState('');
 
@@ -74,9 +78,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
 
   useEffect(() => {
     setSelectedBusinessId(currentBusinessId);
-    if (currentBusinessId !== 'personal') {
-      setTargetBusinessId(currentBusinessId);
-    }
+    setTargetBusinessId(currentBusinessId);
   }, [currentBusinessId]);
 
   useEffect(() => {
@@ -106,8 +108,9 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
     e.preventDefault();
     if (!showPayModal) return;
     const amt = parseFloat(payAmount);
-    if (isNaN(amt) || amt <= 0) return;
-
+    if (!Number.isFinite(amt) || amt <= 0 || amt > showPayModal.totalPayable) { setPayError('Enter an amount up to the outstanding balance.'); return; }
+    if (paySaving) return; setPaySaving(true); setPayError('');
+    try {
     await db.paySupplier(
       showPayModal.id,
       amt,
@@ -118,6 +121,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
     setShowPayModal(null);
     setPayAmount('');
     setPayNotes('');
+    } catch (error) { setPayError(error instanceof Error ? error.message : 'Could not record payment.'); }
+    finally { setPaySaving(false); }
   };
 
   // AI Command processing for suppliers
@@ -128,11 +133,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
     setIsProcessingAI(true);
     setAiFeedback(null);
 
-    const activeBiz = selectedBusinessId === 'all' ? 'jain-sweets' : selectedBusinessId;
+    const activeBiz = selectedBusinessId === 'all' ? currentBusinessId : selectedBusinessId;
     try {
-      const res = await aiAgent.processCommand(aiCommandText, activeBiz);
-      androidAutomation.playSoundEffect('success');
-      setAiFeedback(res.result.speech_response);
+      const message = await aiAgent.runQuickCommand(aiCommandText, activeBiz, onRequestConfirmation);
+      setAiFeedback(message);
       setAiCommandText('');
       await loadData();
     } catch (err: any) {
@@ -146,10 +150,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
   const sendPaymentReminder = (sup: Supplier) => {
     const text = `Namaste ${sup.name}, this is a reminder from ${BUSINESSES[sup.businessId]?.name || 'GopalAI Assistant'}. Your pending payable amount is ₹${sup.totalPayable.toLocaleString('en-IN')}. Please share bank details or UPI for payment. Thank you!`;
     const cleanPhone = sup.contact.replace(/[^\d]/g, '');
-    if (cleanPhone) {
-      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+    if (cleanPhone.length >= 7 && cleanPhone.length <= 15) {
+      if (window.confirm(`Open WhatsApp with this message?\n\n${text}`)) window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
     } else {
-      androidAutomation.initiatePhoneCall(sup.contact || sup.name);
+      setAiFeedback('No valid phone number is recorded for this supplier.');
     }
   };
 
@@ -176,37 +180,37 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-black text-orange-600 dark:text-orange-400">
-            Supplier Accounts & Vendor Ledger
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Manage suppliers, purchase history, vendor payments, and account statements
-          </p>
+          <h1 className="text-xl font-black text-orange-600 dark:text-orange-400">{translateText("Supplier Accounts & Vendor Ledger")}</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{translateText("Manage suppliers, purchase history, vendor payments, and account statements")}</p>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="py-2 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md hover:brightness-110 active:scale-95 transition"
         >
           <Plus className="w-4 h-4 stroke-[3]" />
-          <span>Add Supplier</span>
+          <span>{translateText("Add Supplier")}</span>
         </button>
       </div>
 
       {/* Workspace Selector Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
         {[
-          { id: 'jain-sweets', name: 'Jain Sweets', color: 'text-amber-500' },
-          { id: 'paan-bai', name: 'Paan Bai Canteen', color: 'text-emerald-500' },
-          { id: 'kesarwadi', name: 'Kesarwadi Canteen', color: 'text-orange-500' },
-          { id: 'gopal-caterers', name: 'Gopal Caterers', color: 'text-purple-500' },
-          { id: 'personal', name: 'Personal Wallet', color: 'text-blue-500' },
-          { id: 'all', name: 'All Workspaces', color: 'text-indigo-500' }
+          { id: 'jain-sweets', name: translateText('Jain Sweets'), color: 'text-amber-500' },
+          { id: 'paan-bai', name: translateText('Paan Bai Canteen'), color: 'text-emerald-500' },
+          { id: 'kesarwadi', name: translateText('Kesarwadi Canteen'), color: 'text-orange-500' },
+          { id: 'gopal-caterers', name: translateText('Gopal Caterers'), color: 'text-purple-500' },
+          { id: 'personal', name: translateText('Personal'), color: 'text-blue-500' },
+          { id: 'all', name: translateText('All Workspaces'), color: 'text-indigo-500' }
         ].map((biz) => {
           const isActive = selectedBusinessId === biz.id;
           return (
             <button
               key={biz.id}
-              onClick={() => setSelectedBusinessId(biz.id as any)}
+              onClick={() => {
+                if (biz.id !== selectedBusinessId && showAddForm && !window.confirm(translateText('Change workspace for the open form? Review its target before saving.'))) return;
+                setSelectedBusinessId(biz.id as BusinessId | 'all');
+                if (biz.id !== 'all') setTargetBusinessId(biz.id as BusinessId);
+              }}
               className={`py-2 px-3.5 rounded-xl font-bold text-xs flex items-center gap-2 whitespace-nowrap transition ${
                 isActive
                   ? 'bg-orange-500 text-slate-950 shadow'
@@ -229,7 +233,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
               type="text"
               value={aiCommandText}
               onChange={(e) => setAiCommandText(e.target.value)}
-              placeholder="Voice/Text Command (e.g. Add Ramesh Dairy for Jain Sweets, Pay Ramesh 5000 UPI...)"
+              placeholder={translateText("Voice/Text Command (e.g. Add Ramesh Dairy for Jain Sweets, Pay Ramesh 5000 UPI...)")}
               className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none"
             />
             <button
@@ -238,7 +242,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
               className="py-1.5 px-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition disabled:opacity-50 shrink-0"
             >
               {isProcessingAI ? <span className="animate-spin text-xs">⏳</span> : <Send className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">Execute</span>
+              <span className="hidden sm:inline">{translateText("Execute")}</span>
             </button>
           </div>
         </div>
@@ -253,56 +257,54 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
       {/* Summary Card */}
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-orange-500/30 flex items-center justify-between shadow-sm">
         <div>
-          <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Outstanding Vendor Dues</div>
+          <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">{translateText("Total Outstanding Vendor Dues")}</div>
           <div className="text-2xl font-black text-orange-600 dark:text-orange-400 mt-0.5">
             ₹{totalOutstandingPayable.toLocaleString('en-IN')}
           </div>
         </div>
         <div className="text-right text-xs text-slate-500 dark:text-slate-400">
-          <div className="font-bold text-slate-800 dark:text-slate-200">{filteredSuppliers.length} suppliers</div>
-          <div className="text-[11px]">{suppliers.filter(s => s.totalPayable > 0).length} with pending dues</div>
+          <div className="font-bold text-slate-800 dark:text-slate-200">{filteredSuppliers.length}{" " + translateText("suppliers")}</div>
+          <div className="text-[11px]">{suppliers.filter(s => s.totalPayable > 0).length}{" " + translateText("with pending dues")}</div>
         </div>
       </div>
 
       {/* Add Supplier Form Modal */}
       {showAddForm && (
         <form onSubmit={handleAddSupplier} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-orange-500/40 space-y-3 shadow-lg animate-in fade-in">
-          <div className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider">
-            Add New Supplier Account
-          </div>
+          <div className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider">{translateText("Add New Supplier Account")}</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Target Business*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Target Business*")}</label>
               <select
                 value={targetBusinessId}
                 onChange={(e) => setTargetBusinessId(e.target.value as BusinessId)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="jain-sweets">Jain Sweets</option>
-                <option value="paan-bai">Paan Bai Canteen</option>
-                <option value="kesarwadi">Kesarwadi Canteen</option>
-                <option value="gopal-caterers">Gopal Caterers</option>
-                <option value="personal">Personal Finance</option>
+                <option value="jain-sweets">{translateText("Jain Sweets")}</option>
+                <option value="paan-bai">{translateText("Paan Bai Canteen")}</option>
+                <option value="kesarwadi">{translateText("Kesarwadi Canteen")}</option>
+                <option value="gopal-caterers">{translateText("Gopal Caterers")}</option>
+                <option value="personal">{translateText("Personal")}</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Supplier / Firm Name*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Supplier / Firm Name*")}</label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Ramesh Dairy & Sweets"
+                placeholder={translateText("e.g. Ramesh Dairy & Sweets")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Phone Contact Number</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Phone Contact Number")}</label>
               <input
                 type="tel"
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
-                placeholder="e.g. 9876543210"
+                placeholder={translateText("e.g. 9876543210")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -312,15 +314,11 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
               type="button"
               onClick={() => setShowAddForm(false)}
               className="py-2 px-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-            >
-              Cancel
-            </button>
+            >{translateText("Cancel")}</button>
             <button
               type="submit"
               className="py-2 px-4 rounded-xl bg-orange-500 text-slate-950 font-bold text-xs hover:bg-orange-600 transition"
-            >
-              Save Supplier
-            </button>
+            >{translateText("Save Supplier")}</button>
           </div>
         </form>
       )}
@@ -333,7 +331,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search supplier by name or phone..."
+            placeholder={translateText("Search supplier by name or phone...")}
             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-orange-500"
           />
         </div>
@@ -349,7 +347,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              {f === 'all' ? 'All' : f === 'pending' ? 'Pending Dues' : 'Fully Settled'}
+              {f === 'all' ? translateText("All") : f === 'pending' ? translateText("Pending Dues") : translateText("Fully Settled")}
             </button>
           ))}
         </div>
@@ -360,10 +358,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
         {filteredSuppliers.length === 0 ? (
           <div className="p-10 text-center rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-2 shadow-sm">
             <Users className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto" />
-            <div className="text-sm font-semibold text-slate-800 dark:text-slate-300">No supplier records available</div>
-            <p className="text-xs text-slate-500">
-              Add vendor accounts or record purchases using GopalAI voice command to create supplier ledgers.
-            </p>
+            <div className="text-sm font-semibold text-slate-800 dark:text-slate-300">{translateText("No supplier records available")}</div>
+            <p className="text-xs text-slate-500">{translateText("Add vendor accounts or record purchases using GopalAI voice command to create supplier ledgers.")}</p>
           </div>
         ) : (
           filteredSuppliers.map((sup) => {
@@ -391,14 +387,14 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
                         <span>{sup.contact}</span>
                       </button>
                     )}
-                    <span>Purchases: ₹{sup.totalPurchases.toLocaleString('en-IN')}</span>
-                    <span>Paid: ₹{sup.totalPaid.toLocaleString('en-IN')}</span>
+                    <span>{translateText("Purchases: ₹")}{sup.totalPurchases.toLocaleString('en-IN')}</span>
+                    <span>{translateText("Paid: ₹")}{sup.totalPaid.toLocaleString('en-IN')}</span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-center">
                   <div className="text-right mr-2">
-                    <div className="text-[10px] text-slate-400">Outstanding Due</div>
+                    <div className="text-[10px] text-slate-400">{translateText("Outstanding Due")}</div>
                     <div className="text-sm font-black text-orange-600 dark:text-orange-400">
                       ₹{sup.totalPayable.toLocaleString('en-IN')}
                     </div>
@@ -407,7 +403,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
                   <button
                     onClick={() => setStatementSupplier(sup)}
                     className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
-                    title="View Supplier Statement"
+                    title={translateText("View Supplier Statement")}
                   >
                     <FileText className="w-4 h-4" />
                   </button>
@@ -416,7 +412,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
                     <button
                       onClick={() => sendPaymentReminder(sup)}
                       className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition"
-                      title="Send WhatsApp Payment Reminder"
+                      title={translateText("Send WhatsApp Payment Reminder")}
                     >
                       <MessageSquare className="w-4 h-4" />
                     </button>
@@ -425,14 +421,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
                   <button
                     onClick={() => setShowPayModal(sup)}
                     className="py-1.5 px-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-slate-950 text-xs font-bold transition shadow-xs"
-                  >
-                    Pay Supplier
-                  </button>
+                  >{translateText("Pay Supplier")}</button>
 
                   <button
                     onClick={() => db.deleteSupplier(sup.id)}
                     className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition"
-                    title="Delete Supplier"
+                    title={translateText("Delete Supplier")}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -448,64 +442,61 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
           <form onSubmit={handlePaySupplier} className="w-full max-w-sm bg-white dark:bg-slate-900 border border-orange-500/40 rounded-3xl p-5 space-y-4 shadow-xl">
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
-              <h3 className="font-extrabold text-orange-600 dark:text-orange-400 text-sm">
-                Pay Supplier: {showPayModal.name}
+              <h3 className="font-extrabold text-orange-600 dark:text-orange-400 text-sm">{translateText("Record supplier payment:") + " "}{showPayModal.name}
               </h3>
               <button type="button" onClick={() => setShowPayModal(null)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Outstanding Dues: <span className="font-extrabold text-orange-600 dark:text-orange-400">₹{showPayModal.totalPayable.toLocaleString('en-IN')}</span>
+            <div className="text-xs text-slate-500 dark:text-slate-400">{translateText("Outstanding Dues:") + " "}<span className="font-extrabold text-orange-600 dark:text-orange-400">₹{showPayModal.totalPayable.toLocaleString('en-IN')}</span>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Payment Amount (₹)*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Payment Amount (₹)*")}</label>
               <input
                 type="number"
                 required
                 value={payAmount}
                 onChange={(e) => setPayAmount(e.target.value)}
-                placeholder="e.g. 5000"
+                placeholder={translateText("e.g. 5000")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Payment Method*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Payment Method*")}</label>
               <select
                 value={payMethod}
                 onChange={(e) => setPayMethod(e.target.value as any)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="upi">UPI / GPay / PhonePe</option>
-                <option value="cash">Cash</option>
-                <option value="bank">Bank Transfer</option>
-                <option value="cheque">Cheque</option>
+                <option value="upi">{translateText("UPI / GPay / PhonePe")}</option>
+                <option value="cash">{translateText("Cash")}</option>
+                <option value="bank">{translateText("Bank Transfer")}</option>
+                <option value="cheque">{translateText("Cheque")}</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Notes / Voucher Reference</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Notes / Voucher Reference")}</label>
               <input
                 type="text"
                 value={payNotes}
                 onChange={(e) => setPayNotes(e.target.value)}
-                placeholder="e.g. Payment for raw milk batch"
+                placeholder={translateText("e.g. Payment for raw milk batch")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
+            <p className="text-xs text-slate-500">{translateText("This records a payment already made; it does not transfer money.")}</p>
+            {payError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{payError}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowPayModal(null)}
                 className="py-2 px-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-              >
-                Cancel
-              </button>
+              >{translateText("Cancel")}</button>
               <button
                 type="submit"
+                disabled={paySaving}
                 className="py-2 px-4 rounded-xl bg-orange-500 text-slate-950 font-bold text-xs hover:bg-orange-600 transition"
-              >
-                Confirm & Record Payment
-              </button>
+              >{translateText("Confirm & Record Payment")}</button>
             </div>
           </form>
         </div>
@@ -517,9 +508,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
           <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
-                <h3 className="font-black text-slate-900 dark:text-slate-100 text-base">
-                  Supplier Statement
-                </h3>
+                <h3 className="font-black text-slate-900 dark:text-slate-100 text-base">{translateText("Supplier Statement")}</h3>
                 <p className="text-xs text-slate-500">{statementSupplier.name} ({BUSINESSES[statementSupplier.businessId]?.name})</p>
               </div>
               <button type="button" onClick={() => setStatementSupplier(null)} className="text-slate-400 hover:text-slate-600">
@@ -529,24 +518,24 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ currentBusinessId 
 
             <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl text-center text-xs">
               <div>
-                <div className="text-[10px] text-slate-400">Total Purchases</div>
+                <div className="text-[10px] text-slate-400">{translateText("Total Purchases")}</div>
                 <div className="font-extrabold text-slate-900 dark:text-slate-100">₹{statementSupplier.totalPurchases.toLocaleString('en-IN')}</div>
               </div>
               <div>
-                <div className="text-[10px] text-slate-400">Total Paid</div>
+                <div className="text-[10px] text-slate-400">{translateText("Total Paid")}</div>
                 <div className="font-extrabold text-emerald-600 dark:text-emerald-400">₹{statementSupplier.totalPaid.toLocaleString('en-IN')}</div>
               </div>
               <div>
-                <div className="text-[10px] text-slate-400">Net Due</div>
+                <div className="text-[10px] text-slate-400">{translateText("Net Due")}</div>
                 <div className="font-black text-orange-600 dark:text-orange-400">₹{statementSupplier.totalPayable.toLocaleString('en-IN')}</div>
               </div>
             </div>
 
             {/* Payments List */}
             <div className="space-y-2">
-              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment History Logs</h4>
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">{translateText("Payment History Logs")}</h4>
               {payments.filter(p => p.supplierId === statementSupplier.id).length === 0 ? (
-                <div className="text-xs text-slate-400 italic">No payments recorded for this supplier.</div>
+                <div className="text-xs text-slate-400 italic">{translateText("No payments recorded for this supplier.")}</div>
               ) : (
                 payments.filter(p => p.supplierId === statementSupplier.id).map(p => (
                   <div key={p.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex justify-between text-xs">

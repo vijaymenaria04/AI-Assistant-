@@ -1,24 +1,28 @@
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import { Mic, Sparkles, Send, CheckCircle2, RefreshCw, Building2 } from 'lucide-react';
 import { db } from '../services/db';
-import { aiAgent } from '../services/aiAgent';
+import { aiAgent, ParsedAgentResult } from '../services/aiAgent';
 import { BusinessId, BUSINESSES } from '../types/database';
 import { useTranslation } from '../services/i18n';
 
 interface AIAssistantViewProps {
   currentBusinessId: BusinessId;
   onOpenVoiceOrb: () => void;
+  onRequestConfirmation: (result: ParsedAgentResult) => void;
 }
 
 export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   currentBusinessId,
-  onOpenVoiceOrb
+  onOpenVoiceOrb,
+  onRequestConfirmation
 }) => {
   const { t } = useTranslation();
   const [selectedWorkspace, setSelectedWorkspace] = useState<BusinessId>(currentBusinessId);
   const [history, setHistory] = useState<any[]>([]);
   const [textInput, setTextInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [response, setResponse] = useState<string | null>(null);
 
   const loadHistory = async () => {
     const list = await db.getAICommandHistory();
@@ -45,10 +49,15 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
 
     try {
       const { result } = await aiAgent.processCommand(cmd, selectedWorkspace);
-      await aiAgent.executeAction(result);
-      await loadHistory();
+      if (result.requires_owner_confirmation) {
+        setResponse(result.speech_response);
+        onRequestConfirmation(result);
+      } else {
+        setResponse(await aiAgent.executeAction(result));
+        await loadHistory();
+      }
     } catch (err) {
-      console.error(err);
+      setResponse(err instanceof Error ? err.message : 'The command could not be completed.');
     } finally {
       setIsProcessing(false);
     }
@@ -61,10 +70,10 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-bold text-amber-600 dark:text-amber-400">
             <Sparkles className="w-4 h-4 animate-spin text-amber-500" />
-            <span>GopalAI Intelligent Agent</span>
+            <span>{translateText("GopalAI Intelligent Agent")}</span>
           </div>
           <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100">{t('aiCommandCenter')}</h1>
-          <p className="text-xs text-slate-700 dark:text-slate-300">Hindi, English & Hinglish Voice Command Automation</p>
+          <p className="text-xs text-slate-700 dark:text-slate-300">{translateText("Hindi, English & Hinglish Voice Command Automation")}</p>
         </div>
         <button
           onClick={onOpenVoiceOrb}
@@ -77,11 +86,11 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
       {/* Workspace Selector Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
         {[
-          { id: 'jain-sweets', name: 'Jain Sweets', color: 'text-amber-500' },
-          { id: 'paan-bai', name: 'Paan Bai Canteen', color: 'text-emerald-500' },
-          { id: 'kesarwadi', name: 'Kesarwadi Canteen', color: 'text-orange-500' },
-          { id: 'gopal-caterers', name: 'Gopal Caterers', color: 'text-purple-500' },
-          { id: 'personal', name: 'Personal Wallet', color: 'text-blue-500' }
+          { id: 'jain-sweets', name: translateText('Jain Sweets'), color: 'text-amber-500' },
+          { id: 'paan-bai', name: translateText('Paan Bai Canteen'), color: 'text-emerald-500' },
+          { id: 'kesarwadi', name: translateText('Kesarwadi Canteen'), color: 'text-orange-500' },
+          { id: 'gopal-caterers', name: translateText('Gopal Caterers'), color: 'text-purple-500' },
+          { id: 'personal', name: translateText('Personal'), color: 'text-blue-500' }
         ].map((biz) => {
           const isActive = selectedWorkspace === biz.id;
           return (
@@ -119,6 +128,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
         </button>
       </form>
 
+      {response && <div role="status" className="rounded-xl border border-amber-500/30 bg-white dark:bg-slate-900 p-3 text-sm text-slate-800 dark:text-slate-200">{response}</div>}
       {/* History Log */}
       <div className="space-y-2">
         <div className="text-xs font-bold text-slate-800 dark:text-slate-200">{t('commandHistoryLog')}</div>

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import { translateText } from '../services/i18n';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   CheckSquare,
   Bell,
@@ -25,14 +26,15 @@ import { db } from '../services/db';
 import { Task, Reminder, Note, BusinessId, BUSINESSES } from '../types/database';
 import { useTranslation } from '../services/i18n';
 import { androidAutomation } from '../services/androidAutomation';
-import { aiAgent } from '../services/aiAgent';
+import { aiAgent, type ParsedAgentResult } from '../services/aiAgent';
 import { voice } from '../services/voice';
 
 interface TasksRemindersViewProps {
   currentBusinessId?: BusinessId;
+  onRequestConfirmation?: (result: ParsedAgentResult) => void;
 }
 
-export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentBusinessId = 'jain-sweets' }) => {
+export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentBusinessId = 'jain-sweets', onRequestConfirmation }) => {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -40,7 +42,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
   const [activeSubTab, setActiveSubTab] = useState<'tasks' | 'reminders' | 'notes'>('tasks');
 
   // Filters
-  const [selectedWorkspace, setSelectedWorkspace] = useState<BusinessId | 'all'>('all');
+  const [selectedWorkspace, setSelectedWorkspace] = useState<BusinessId | 'all'>(currentBusinessId);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
 
@@ -50,18 +52,21 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
   const [newTaskCategory, setNewTaskCategory] = useState<'personal' | 'supplier_payment' | 'stock_alert' | 'staff_task' | 'routine'>('routine');
   const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
-  const [newTaskWorkspace, setNewTaskWorkspace] = useState<BusinessId>('jain-sweets');
+  const [newTaskWorkspace, setNewTaskWorkspace] = useState<BusinessId>(currentBusinessId);
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
 
   const [newRemTitle, setNewRemTitle] = useState('');
   const [newRemTime, setNewRemTime] = useState('');
   const [newRemPriority, setNewRemPriority] = useState<'low' | 'medium' | 'high'>('medium');
-  const [newRemWorkspace, setNewRemWorkspace] = useState<BusinessId>('jain-sweets');
+  const [newRemWorkspace, setNewRemWorkspace] = useState<BusinessId>(currentBusinessId);
 
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isVoiceListening, setIsVoiceListening] = useState(false);
   const [aiPromptInput, setAiPromptInput] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const voiceOwned = useRef(false);
+  const voiceStarted = useRef(false);
 
   const loadData = async () => {
     const tList = await db.getTasks();
@@ -77,6 +82,12 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
     const unsub = db.subscribe(loadData);
     return unsub;
   }, []);
+
+  useEffect(() => {
+    setSelectedWorkspace(currentBusinessId);
+    setNewTaskWorkspace(currentBusinessId);
+    setNewRemWorkspace(currentBusinessId);
+  }, [currentBusinessId]);
 
   // Filtered Tasks
   const filteredTasks = tasks.filter((task) => {
@@ -132,8 +143,8 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
 
     // Fire immediate Android push notification
     androidAutomation.showSystemNotification(
-      `Reminder Set: ${newRem.title}`,
-      `Scheduled for ${new Date(newRemTime).toLocaleString()}`
+      `Reminder saved: ${newRem.title}`,
+      `Saved for ${new Date(newRemTime).toLocaleString()}. Timed alerts are not available in this preview.`
     );
 
     setNewRemTitle('');
@@ -158,52 +169,48 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
     if (!textToRun.trim()) return;
 
     setIsAiProcessing(true);
+    setAiFeedback(null);
     try {
-      const { result } = await aiAgent.processCommand(textToRun, currentBusinessId);
-      const msg = await aiAgent.executeAction(result);
+      const workspace = selectedWorkspace === 'all' ? currentBusinessId : selectedWorkspace;
+      const message = await aiAgent.runQuickCommand(textToRun, workspace, onRequestConfirmation);
+      setAiFeedback(message);
       setAiPromptInput('');
-
-      // Send Android notification confirmation
-      androidAutomation.showSystemNotification('GopalAI Action Completed', msg);
     } catch (e) {
-      console.error('Error executing voice command in tasks:', e);
+      setAiFeedback(e instanceof Error ? e.message : 'The command could not be completed.');
     } finally {
       setIsAiProcessing(false);
     }
   };
 
-  const toggleMicListening = () => {
-    if (isVoiceListening) {
-      voice.stopListening();
-      setIsVoiceListening(false);
-    } else {
-      setIsVoiceListening(true);
-      androidAutomation.playSoundEffect('mic_start');
-      voice.startListening('hi-IN');
+  useEffect(() => {
+    const unsubscribe = voice.subscribe(state => {
+      if (!voiceOwned.current) return;
+      if (state.error) { voiceOwned.current = false; setIsVoiceListening(false); setAiFeedback(state.error); return; }
+      if (state.isListening) { voiceStarted.current = true; setIsVoiceListening(true); }
+      if (voiceStarted.current && !state.isListening) {
+        voiceOwned.current = false; voiceStarted.current = false; setIsVoiceListening(false);
+        const transcript = voice.takeTranscript();
+        if (transcript) setAiPromptInput(transcript);
+      }
+    });
+    return () => { unsubscribe(); if (voiceOwned.current) { voiceOwned.current = false; voice.stopListening(); voice.takeTranscript(); } };
+  }, []);
 
-      const unsub = voice.subscribe(async (state) => {
-        if (state.transcript) {
-          setAiPromptInput(state.transcript);
-        }
-        if (!state.isListening && isVoiceListening) {
-          setIsVoiceListening(false);
-          unsub();
-          if (state.transcript.trim()) {
-            await handleVoiceCommandSubmit(state.transcript);
-          }
-        }
-      });
-    }
+  const toggleMicListening = () => {
+    if (isVoiceListening) { voice.stopListening(); return; }
+    voice.takeTranscript(); voiceOwned.current = true; voiceStarted.current = false;
+    setAiFeedback(null); androidAutomation.playSoundEffect('mic_start');
+    voice.startListening('hi-IN');
   };
 
   const getPriorityBadge = (priority: 'low' | 'medium' | 'high') => {
     switch (priority) {
       case 'high':
-        return <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 uppercase">High Priority</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 uppercase">{translateText("High Priority")}</span>;
       case 'medium':
-        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 uppercase">Medium</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 uppercase">{translateText("Medium")}</span>;
       default:
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 uppercase">Low</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 uppercase">{translateText("Low")}</span>;
     }
   };
 
@@ -254,7 +261,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
           className="py-2 px-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md hover:brightness-110 active:scale-95 transition"
         >
           <Plus className="w-4 h-4 stroke-[3]" />
-          <span>Add Task</span>
+          <span>{translateText("Add Task")}</span>
         </button>
       </div>
 
@@ -263,7 +270,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
             <Sparkles className="w-4 h-4 animate-pulse text-amber-500" />
-            <span>AI Voice & Text Task Assistant</span>
+            <span>{translateText("AI Voice & Text Task Assistant")}</span>
           </div>
           <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-semibold">Hindi / English / Hinglish</span>
         </div>
@@ -274,11 +281,12 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
             value={aiPromptInput}
             onChange={(e) => setAiPromptInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleVoiceCommandSubmit()}
-            placeholder="e.g., 'Kal shaam 5 baje milk vendor ko payment karne ka reminder set karo'..."
+            placeholder={translateText("e.g., 'Kal shaam 5 baje milk vendor ko payment karne ka reminder set karo'...")}
             className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500"
           />
           <button
             onClick={toggleMicListening}
+            aria-label={isVoiceListening ? "Stop listening" : "Voice command"}
             className={`p-2.5 rounded-xl flex items-center justify-center transition shadow-xs ${
               isVoiceListening
                 ? 'bg-rose-500 text-white animate-bounce'
@@ -295,6 +303,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
             <Send className="w-4 h-4 stroke-[2.5]" />
           </button>
         </div>
+        {aiFeedback && <p role="status" className="text-xs text-slate-700 dark:text-slate-300">{aiFeedback}</p>}
       </div>
 
       {/* Business Workspace Filter Pills */}
@@ -306,8 +315,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
               ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
               : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
           }`}
-        >
-          All Workspaces ({tasks.length})
+        >{translateText("All Workspaces (")}{tasks.length})
         </button>
 
         {Object.entries(BUSINESSES).map(([id, info]) => {
@@ -323,7 +331,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
               }`}
             >
               {getWorkspaceIcon(id as BusinessId)}
-              <span>{info.name}</span>
+              <span>{translateText(info.name)}</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                 {count}
               </span>
@@ -347,7 +355,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
             {tab === 'tasks' && <CheckSquare className="w-4 h-4 text-amber-500" />}
             {tab === 'reminders' && <Bell className="w-4 h-4 text-amber-500" />}
             {tab === 'notes' && <StickyNote className="w-4 h-4 text-amber-500" />}
-            <span>{t(tab as any) || tab}</span>
+            <span>{tab === 'tasks' ? t('tasks') : translateText(tab === 'reminders' ? 'Reminders' : 'Notes')}</span>
           </button>
         ))}
       </div>
@@ -358,7 +366,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
           {/* Category Filter & Status Toggles */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
-              <span className="text-slate-400 font-semibold text-[11px] mr-1">Category:</span>
+              <span className="text-slate-400 font-semibold text-[11px] mr-1">{translateText("Category:")}</span>
               {['all', 'personal', 'supplier_payment', 'stock_alert', 'staff_task', 'routine'].map((cat) => (
                 <button
                   key={cat}
@@ -369,7 +377,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                       : 'bg-white/70 dark:bg-slate-900/70 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800'
                   }`}
                 >
-                  {cat === 'all' ? 'All' : getCategoryLabel(cat)}
+                  {cat === 'all' ? translateText('All') : translateText(getCategoryLabel(cat))}
                 </button>
               ))}
             </div>
@@ -381,7 +389,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                 onChange={(e) => setShowCompleted(e.target.checked)}
                 className="rounded text-amber-500 focus:ring-amber-500"
               />
-              <span>Show Done Tasks</span>
+              <span>{translateText("Show Done Tasks")}</span>
             </label>
           </div>
 
@@ -394,9 +402,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                 <button
                   onClick={() => setShowAddTaskModal(true)}
                   className="px-3 py-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-xl hover:bg-amber-500/20 transition"
-                >
-                  Create Task Now
-                </button>
+                >{translateText("Create Task Now")}</button>
               </div>
             ) : (
               filteredTasks.map((task) => (
@@ -456,7 +462,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                       {task.dueDate && (
                         <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
                           <Calendar className="w-2.5 h-2.5" />
-                          <span>Due: {task.dueDate}</span>
+                          <span>{translateText("Due:") + " "}{task.dueDate}</span>
                         </span>
                       )}
                     </div>
@@ -478,6 +484,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
       {/* Sub-Tab 2: Reminders */}
       {activeSubTab === 'reminders' && (
         <div className="space-y-3">
+          <p className="text-xs text-amber-700 dark:text-amber-300">{translateText('Reminders are saved in the app; timed background alerts are not available in this preview.')}</p>
           <form
             onSubmit={handleAddReminder}
             className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 space-y-3 shadow-xs"
@@ -493,7 +500,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                 required
                 value={newRemTitle}
                 onChange={(e) => setNewRemTitle(e.target.value)}
-                placeholder="Reminder Title (e.g. Pay electricity bill)"
+                placeholder={translateText("Reminder Title (e.g. Pay electricity bill)")}
                 className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
               />
               <input
@@ -507,7 +514,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Business Workspace</label>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">{translateText("Business Workspace")}</label>
                 <select
                   value={newRemWorkspace}
                   onChange={(e) => setNewRemWorkspace(e.target.value as BusinessId)}
@@ -515,22 +522,22 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                 >
                   {Object.entries(BUSINESSES).map(([id, b]) => (
                     <option key={id} value={id}>
-                      {b.name}
+                      {translateText(b.name)}
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Priority</label>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">{translateText("Priority")}</label>
                 <select
                   value={newRemPriority}
                   onChange={(e) => setNewRemPriority(e.target.value as any)}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
                 >
-                  <option value="low">Low Priority</option>
-                  <option value="medium">Medium Priority</option>
-                  <option value="high">High Priority</option>
+                  <option value="low">{translateText("Low Priority")}</option>
+                  <option value="medium">{translateText("Medium Priority")}</option>
+                  <option value="high">{translateText("High Priority")}</option>
                 </select>
               </div>
             </div>
@@ -590,7 +597,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
               rows={3}
               value={newNoteContent}
               onChange={(e) => setNewNoteContent(e.target.value)}
-              placeholder="Write a quick note, supplier instructions, or shop reminder..."
+              placeholder={translateText("Write a quick note, supplier instructions, or shop reminder...")}
               className="w-full bg-white/90 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl p-3 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500 shadow-xs"
             />
             <button
@@ -638,7 +645,7 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="font-extrabold text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-amber-500" />
-                <span>Create New Task</span>
+                <span>{translateText("Create New Task")}</span>
               </div>
               <button
                 onClick={() => setShowAddTaskModal(false)}
@@ -650,37 +657,31 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
 
             <form onSubmit={handleCreateTask} className="space-y-3 text-xs">
               <div>
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Task Title *
-                </label>
+                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Task Title *")}</label>
                 <input
                   type="text"
                   required
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
-                  placeholder="e.g. Reorder packaging boxes"
+                  placeholder={translateText("e.g. Reorder packaging boxes")}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Description / Instructions
-                </label>
+                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Description / Instructions")}</label>
                 <textarea
                   rows={2}
                   value={newTaskDescription}
                   onChange={(e) => setNewTaskDescription(e.target.value)}
-                  placeholder="Optional task details..."
+                  placeholder={translateText("Optional task details...")}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-2 text-xs text-slate-900 dark:text-slate-100"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Workspace
-                  </label>
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Workspace")}</label>
                   <select
                     value={newTaskWorkspace}
                     onChange={(e) => setNewTaskWorkspace(e.target.value as BusinessId)}
@@ -688,50 +689,44 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                   >
                     {Object.entries(BUSINESSES).map(([id, b]) => (
                       <option key={id} value={id}>
-                        {b.name}
+                        {translateText(b.name)}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Category
-                  </label>
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Category")}</label>
                   <select
                     value={newTaskCategory}
                     onChange={(e) => setNewTaskCategory(e.target.value as any)}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
                   >
-                    <option value="routine">Routine Task</option>
-                    <option value="supplier_payment">Supplier Payment</option>
-                    <option value="stock_alert">Stock Alert</option>
-                    <option value="staff_task">Staff Task</option>
-                    <option value="personal">Personal</option>
+                    <option value="routine">{translateText("Routine Task")}</option>
+                    <option value="supplier_payment">{translateText("Supplier Payment")}</option>
+                    <option value="stock_alert">{translateText("Stock Alert")}</option>
+                    <option value="staff_task">{translateText("Staff Task")}</option>
+                    <option value="personal">{translateText("Personal")}</option>
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Priority Level
-                  </label>
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Priority Level")}</label>
                   <select
                     value={newTaskPriority}
                     onChange={(e) => setNewTaskPriority(e.target.value as any)}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
                   >
-                    <option value="low">Low Priority</option>
-                    <option value="medium">Medium Priority</option>
-                    <option value="high">High Priority</option>
+                    <option value="low">{translateText("Low Priority")}</option>
+                    <option value="medium">{translateText("Medium Priority")}</option>
+                    <option value="high">{translateText("High Priority")}</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Due Date (Optional)
-                  </label>
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">{translateText("Due Date (Optional)")}</label>
                   <input
                     type="date"
                     value={newTaskDueDate}
@@ -746,15 +741,11 @@ export const TasksRemindersView: React.FC<TasksRemindersViewProps> = ({ currentB
                   type="button"
                   onClick={() => setShowAddTaskModal(false)}
                   className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
+                >{translateText("Cancel")}</button>
                 <button
                   type="submit"
                   className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-bold shadow-xs hover:brightness-110"
-                >
-                  Save Task
-                </button>
+                >{translateText("Save Task")}</button>
               </div>
             </form>
           </div>

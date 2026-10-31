@@ -1,3 +1,5 @@
+import { localDate } from './localDate';
+import { sameProductName } from './productNames';
 import {
   BusinessId,
   PersonalTransaction,
@@ -29,6 +31,8 @@ import {
   SyncQueueItem,
   AppSettings
 } from '../types/database';
+
+import { JAIN_SWEETS_INVENTORY } from '../data/jainSweetsInventory';
 
 const DB_NAME = 'GopalAI_Assistant_DB';
 const DB_VERSION = 5;
@@ -135,7 +139,7 @@ class DatabaseService {
 
       request.onsuccess = (e) => {
         this.db = (e.target as IDBOpenDBRequest).result;
-        this.ensureDefaultSettings().then(() => resolve());
+        this.ensureDefaultSettings().then(() => this.seedMenuInventory()).then(() => resolve(), reject);
       };
 
       request.onerror = (e) => {
@@ -143,6 +147,58 @@ class DatabaseService {
         reject(e);
       };
     });
+  }
+
+  // Each workspace has its own atomic import marker. Existing items are never
+  // overwritten, and deleting an item does not cause it to return on reload.
+  private async seedMenuInventory(): Promise<void> {
+    if (!this.db) throw new Error('Database is not initialized');
+    const database = this.db;
+    let totalAdded = 0;
+    const workspaces: BusinessId[] = ['jain-sweets', 'kesarwadi', 'paan-bai'];
+    for (const businessId of workspaces) {
+      const markerKey = `${businessId}-inventory-menu-v1`;
+      totalAdded += await new Promise<number>((resolve, reject) => {
+        const tx = database.transaction(['inventory_items', 'app_settings'], 'readwrite');
+        const settings = tx.objectStore('app_settings');
+        const inventory = tx.objectStore('inventory_items');
+        let count = 0;
+        const marker = settings.get(markerKey);
+        marker.onsuccess = () => {
+          if (marker.result) return;
+          const request = inventory.getAll();
+          request.onsuccess = () => {
+            const normalize = (name: string) => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+            const existing = new Set((request.result as InventoryItem[])
+              .filter(item => item.businessId === businessId)
+              .map(item => normalize(item.name)));
+            const now = new Date().toISOString();
+            for (const product of JAIN_SWEETS_INVENTORY) {
+              const key = normalize(product.name);
+              if (existing.has(key)) continue;
+              existing.add(key);
+              inventory.add({
+                id: `menu_${crypto.randomUUID()}`,
+                businessId,
+                name: product.name,
+                category: product.category,
+                stockQuantity: 0,
+                unit: '',
+                minStockLevel: 0,
+                reorderAlertEnabled: false,
+                lastUpdated: now
+              } satisfies InventoryItem);
+              count++;
+            }
+            settings.put({ key: markerKey, importedAt: now });
+          };
+        };
+        tx.oncomplete = () => resolve(count);
+        tx.onabort = () => reject(tx.error || new Error(`Could not import inventory for ${businessId}`));
+        tx.onerror = () => reject(tx.error || new Error(`Could not import inventory for ${businessId}`));
+      });
+    }
+    if (totalAdded) this.notify();
   }
 
   public subscribe(cb: EventCallback): () => void {
@@ -159,15 +215,13 @@ class DatabaseService {
     const settings = await this.getItem<string, AppSettings & { key: string }>('app_settings', 'config');
     return settings || {
       theme: 'dark',
-      language: 'hinglish',
-      pinEnabled: true,
-      pinHash: '1234',
+      language: 'english',
       voiceGender: 'female',
       voiceSpeed: 1,
       ttsEnabled: true,
       cloudSyncEnabled: true,
       backgroundTasksEnabled: true,
-      ownerName: 'Gopal'
+      ownerName: ''
     };
   }
 
@@ -184,15 +238,13 @@ class DatabaseService {
       await this.setItem('app_settings', {
         key: 'config',
         theme: 'dark',
-        language: 'hinglish',
-        pinEnabled: true,
-        pinHash: '1234',
+        language: 'english',
         voiceGender: 'female',
         voiceSpeed: 1,
         ttsEnabled: true,
         cloudSyncEnabled: true,
         backgroundTasksEnabled: true,
-        ownerName: 'Gopal'
+        ownerName: ''
       });
     }
   }
@@ -200,131 +252,127 @@ class DatabaseService {
   // --- Helper Methods ---
   private async getAll<T>(storeName: string): Promise<T[]> {
     if (!this.db) await this.init();
-    if (!this.db || !this.db.objectStoreNames.contains(storeName)) {
-      console.warn(`Object store "${storeName}" not found in IndexedDB.`);
-      return [];
-    }
-    return new Promise((resolve) => {
+    if (!this.db || !this.db.objectStoreNames.contains(storeName)) throw new Error(`Database store "${storeName}" is unavailable.`);
+    return new Promise((resolve, reject) => {
       try {
         const tx = this.db!.transaction(storeName, 'readonly');
-        const store = tx.objectStore(storeName);
-        const req = store.getAll();
+        const req = tx.objectStore(storeName).getAll();
         req.onsuccess = () => resolve(req.result || []);
-        req.onerror = (err) => {
-          console.warn(`Error reading store "${storeName}":`, err);
-          resolve([]);
-        };
-      } catch (err) {
-        console.warn(`Failed transaction for store "${storeName}":`, err);
-        resolve([]);
-      }
+        req.onerror = () => reject(req.error || new Error(`Could not read ${storeName}.`));
+        tx.onabort = () => reject(tx.error || new Error(`Reading ${storeName} was interrupted.`));
+      } catch (error) { reject(error); }
     });
   }
 
   private async getItem<K, T>(storeName: string, key: K): Promise<T | null> {
     if (!this.db) await this.init();
-    if (!this.db || !this.db.objectStoreNames.contains(storeName)) {
-      console.warn(`Object store "${storeName}" not found in IndexedDB.`);
-      return null;
-    }
-    return new Promise((resolve) => {
+    if (!this.db || !this.db.objectStoreNames.contains(storeName)) throw new Error(`Database store "${storeName}" is unavailable.`);
+    return new Promise((resolve, reject) => {
       try {
         const tx = this.db!.transaction(storeName, 'readonly');
-        const store = tx.objectStore(storeName);
-        const req = store.get(key as any);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = (err) => {
-          console.warn(`Error reading item from "${storeName}":`, err);
-          resolve(null);
-        };
-      } catch (err) {
-        console.warn(`Failed transaction for store "${storeName}":`, err);
-        resolve(null);
-      }
+        const req = tx.objectStore(storeName).get(key as IDBValidKey);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => reject(req.error || new Error(`Could not read ${storeName}.`));
+        tx.onabort = () => reject(tx.error || new Error(`Reading ${storeName} was interrupted.`));
+      } catch (error) { reject(error); }
     });
   }
 
   private async setItem<T extends { id?: string; key?: string }>(storeName: string, item: T): Promise<void> {
     if (!this.db) await this.init();
-    if (!this.db || !this.db.objectStoreNames.contains(storeName)) {
-      console.warn(`Object store "${storeName}" not found in IndexedDB.`);
-      return;
-    }
-    return new Promise((resolve) => {
+    if (!this.db || !this.db.objectStoreNames.contains(storeName)) throw new Error(`Database store "${storeName}" is unavailable.`);
+    return new Promise((resolve, reject) => {
       try {
         const tx = this.db!.transaction(storeName, 'readwrite');
-        const store = tx.objectStore(storeName);
-        const req = store.put(item);
-        req.onsuccess = () => resolve();
-        req.onerror = (err) => {
-          console.warn(`Error writing to store "${storeName}":`, err);
-          resolve();
-        };
-      } catch (err) {
-        console.warn(`Failed put transaction for store "${storeName}":`, err);
-        resolve();
-      }
+        tx.objectStore(storeName).put(item);
+        // Request success is not enough: a later abort rolls back the write.
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error || new Error(`Saving ${storeName} was interrupted.`));
+        tx.onerror = () => reject(tx.error || new Error(`Could not save ${storeName}.`));
+      } catch (error) { reject(error); }
     });
   }
 
   private async deleteItem(storeName: string, id: string): Promise<void> {
     if (!this.db) await this.init();
-    if (!this.db || !this.db.objectStoreNames.contains(storeName)) {
-      console.warn(`Object store "${storeName}" not found in IndexedDB.`);
-      return;
-    }
-    return new Promise((resolve) => {
+    if (!this.db || !this.db.objectStoreNames.contains(storeName)) throw new Error(`Database store "${storeName}" is unavailable.`);
+    return new Promise((resolve, reject) => {
       try {
         const tx = this.db!.transaction(storeName, 'readwrite');
-        const store = tx.objectStore(storeName);
-        const req = store.delete(id);
-        req.onsuccess = () => resolve();
-        req.onerror = (err) => {
-          console.warn(`Error deleting from store "${storeName}":`, err);
-          resolve();
-        };
-      } catch (err) {
-        console.warn(`Failed delete transaction for store "${storeName}":`, err);
-        resolve();
-      }
+        tx.objectStore(storeName).delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error || new Error(`Deleting from ${storeName} was interrupted.`));
+        tx.onerror = () => reject(tx.error || new Error(`Could not delete from ${storeName}.`));
+      } catch (error) { reject(error); }
     });
   }
 
   // --- Sales ---
   public async getSales(businessId?: BusinessId): Promise<Sale[]> {
     const all = await this.getAll<Sale>('sales');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((s) => s.businessId === businessId);
   }
 
   public async addSale(sale: Omit<Sale, 'id' | 'createdAt'>): Promise<Sale> {
-    const newSale: Sale = {
-      ...sale,
-      id: 'sale_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-    await this.setItem('sales', newSale);
-
-    // Record stock movements for sold items if inventory matches
-    for (const item of sale.items) {
-      await this.recordStockMovement({
-        businessId: sale.businessId,
-        itemName: item.itemName,
-        type: 'sale',
-        quantity: item.quantity,
-        unit: item.unit,
-        notes: `Sale #${newSale.id}`
-      });
-    }
-
-    // Queue cloud sync
-    await this.addToSyncQueue('ADD_SALE', newSale);
+    if (!Number.isFinite(sale.amount) || sale.amount <= 0 || sale.items.some(item => !item.itemName.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !item.unit)) throw new Error('Enter a valid sale amount and item quantity.');
+    if (!this.db) await this.init();
+    const newSale: Sale = { ...sale, id: `sale_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    const sync: SyncQueueItem = { id: `sync_${crypto.randomUUID()}`, actionType: 'ADD_SALE', payloadJson: JSON.stringify(newSale), timestamp: new Date().toISOString(), retryCount: 0, status: 'pending' };
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not save the sale.';
+      try {
+        const tx = this.db!.transaction(['sales', 'inventory_items', 'stock_movements', 'sync_queue'], 'readwrite');
+        const inventory = tx.objectStore('inventory_items');
+        const req = inventory.getAll();
+        req.onsuccess = () => {
+          const items = (req.result as InventoryItem[]).filter(i => i.businessId === sale.businessId);
+          for (const item of sale.items) {
+            const matches = items.filter(i => sameProductName(i.name, item.itemName));
+            if (matches.length > 1) { reason = `Multiple inventory items match ${item.itemName}. Resolve duplicates before recording this sale.`; tx.abort(); return; }
+            const stock = matches[0];
+            if (!stock) continue; // An untracked sale item does not create a phantom stock movement.
+            if (!stock.unit || stock.unit.toLowerCase() !== item.unit.toLowerCase()) { reason = `Check the inventory unit for ${item.itemName} before recording this sale.`; tx.abort(); return; }
+            if (!Number.isFinite(stock.stockQuantity) || stock.stockQuantity < item.quantity) { reason = `Not enough stock for ${item.itemName}.`; tx.abort(); return; }
+            stock.stockQuantity -= item.quantity; stock.lastUpdated = new Date().toISOString();
+            inventory.put(stock);
+            tx.objectStore('stock_movements').put({ id: `sm_${crypto.randomUUID()}`, businessId: sale.businessId, inventoryItemId: stock.id, itemName: stock.name, type: 'sale', quantity: item.quantity, unit: item.unit, notes: `Sale #${newSale.id}`, createdAt: new Date().toISOString() } satisfies StockMovement);
+          }
+          tx.objectStore('sales').put(newSale); tx.objectStore('sync_queue').put(sync);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error || new Error(reason));
+        tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
+    });
     this.notify();
     return newSale;
   }
 
   public async deleteSale(id: string): Promise<void> {
-    await this.deleteItem('sales', id);
+    if (!this.db) await this.init();
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not delete the sale.';
+      try {
+        const tx = this.db!.transaction(['sales', 'inventory_items', 'stock_movements'], 'readwrite');
+        const sales = tx.objectStore('sales'); const inventory = tx.objectStore('inventory_items'); const movements = tx.objectStore('stock_movements');
+        const saleReq = sales.get(id); const invReq = inventory.getAll(); const movReq = movements.getAll();
+        let ready = 0;
+        const apply = () => {
+          if (++ready !== 3 || !saleReq.result) return;
+          const sale = saleReq.result as Sale;
+          const stockItems = invReq.result as InventoryItem[];
+          for (const move of (movReq.result as StockMovement[]).filter(m => m.businessId === sale.businessId && m.type === 'sale' && m.notes === `Sale #${id}` && m.inventoryItemId)) {
+            const stock = stockItems.find(item => item.id === move.inventoryItemId && item.businessId === sale.businessId);
+            if (!stock || stock.unit.toLowerCase() !== move.unit.toLowerCase()) { reason = `Cannot restore stock for ${move.itemName}; check the inventory item and unit first.`; tx.abort(); return; }
+            stock.stockQuantity += move.quantity; stock.lastUpdated = new Date().toISOString(); inventory.put(stock); movements.delete(move.id);
+          }
+          sales.delete(id);
+        };
+        saleReq.onsuccess = apply; invReq.onsuccess = apply; movReq.onsuccess = apply;
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
+    });
     this.notify();
   }
 
@@ -336,74 +384,69 @@ class DatabaseService {
   }
 
   public async addExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Promise<Expense> {
-    const newExpense: Expense = {
-      ...expense,
-      id: 'exp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-    await this.setItem('expenses', newExpense);
-    await this.addToSyncQueue('ADD_EXPENSE', newExpense);
+    if (!Number.isFinite(expense.amount) || expense.amount <= 0) throw new Error('Enter a valid expense amount.');
+    if (!this.db) await this.init();
+    const newExpense: Expense = { ...expense, id: `exp_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    const sync: SyncQueueItem = { id: `sync_${crypto.randomUUID()}`, actionType: 'ADD_EXPENSE', payloadJson: JSON.stringify(newExpense), timestamp: new Date().toISOString(), retryCount: 0, status: 'pending' };
+    await new Promise<void>((resolve, reject) => {
+      try {
+        const tx = this.db!.transaction(['expenses', 'sync_queue'], 'readwrite');
+        tx.objectStore('expenses').put(newExpense); tx.objectStore('sync_queue').put(sync);
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error('Saving the expense was interrupted.')); tx.onerror = () => reject(tx.error || new Error('Could not save the expense.'));
+      } catch (error) { reject(error); }
+    });
+    this.notify(); return newExpense;
+  }
+
+  public async deleteExpense(id: string): Promise<void> {
+    await this.deleteItem('expenses', id);
     this.notify();
-    return newExpense;
   }
 
   // --- Purchases ---
   public async getPurchases(businessId?: BusinessId): Promise<Purchase[]> {
     const all = await this.getAll<Purchase>('purchases');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((p) => p.businessId === businessId);
   }
 
   public async addPurchase(purchase: Omit<Purchase, 'id' | 'createdAt' | 'pendingAmount' | 'paymentStatus'>): Promise<Purchase> {
-    const pendingAmount = Math.max(0, purchase.amount - purchase.paidAmount);
-    const paymentStatus: 'paid' | 'partial' | 'pending' =
-      pendingAmount === 0 ? 'paid' : purchase.paidAmount > 0 ? 'partial' : 'pending';
-
-    const newPurchase: Purchase = {
-      ...purchase,
-      pendingAmount,
-      paymentStatus,
-      id: 'pur_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-    await this.setItem('purchases', newPurchase);
-
-    // Update or add inventory
-    const inventory = await this.getInventory(purchase.businessId);
-    const existing = inventory.find((i) => i.name.toLowerCase() === purchase.itemName.toLowerCase());
-    if (existing) {
-      existing.stockQuantity += purchase.quantity;
-      existing.lastUpdated = new Date().toISOString();
-      await this.setItem('inventory_items', existing);
-    } else {
-      await this.setItem('inventory_items', {
-        id: 'inv_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-        businessId: purchase.businessId,
-        name: purchase.itemName,
-        category: 'Raw Materials',
-        stockQuantity: purchase.quantity,
-        unit: purchase.unit,
-        minStockLevel: 10,
-        lastUpdated: new Date().toISOString()
-      } as InventoryItem);
-    }
-
-    // Record stock movement
-    await this.recordStockMovement({
-      businessId: purchase.businessId,
-      itemName: purchase.itemName,
-      type: 'purchase',
-      quantity: purchase.quantity,
-      unit: purchase.unit,
-      notes: `Purchase from ${purchase.supplierName}`
+    if (!purchase.itemName.trim() || !purchase.unit.trim() || !Number.isFinite(purchase.quantity) || purchase.quantity <= 0 || !Number.isFinite(purchase.amount) || purchase.amount <= 0 || !Number.isFinite(purchase.paidAmount) || purchase.paidAmount < 0 || purchase.paidAmount > purchase.amount) throw new Error('Enter a valid item, quantity, amount and paid amount. Paid amount cannot exceed the bill.');
+    if (!this.db) await this.init();
+    const pendingAmount = purchase.amount - purchase.paidAmount;
+    const paymentStatus: Purchase['paymentStatus'] = pendingAmount === 0 ? 'paid' : purchase.paidAmount > 0 ? 'partial' : 'pending';
+    const newPurchase: Purchase = { ...purchase, itemName: purchase.itemName.trim(), supplierName: purchase.supplierName.trim(), pendingAmount, paymentStatus, id: `pur_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    const sync: SyncQueueItem = { id: `sync_${crypto.randomUUID()}`, actionType: 'ADD_PURCHASE', payloadJson: JSON.stringify(newPurchase), timestamp: new Date().toISOString(), retryCount: 0, status: 'pending' };
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not save the purchase.';
+      try {
+        const tx = this.db!.transaction(['purchases', 'inventory_items', 'stock_movements', 'suppliers', 'sync_queue'], 'readwrite');
+        const inventory = tx.objectStore('inventory_items'); const suppliers = tx.objectStore('suppliers');
+        const invReq = inventory.getAll(); const supReq = suppliers.getAll();
+        let invReady = false, supReady = false;
+        const apply = () => {
+          if (!invReady || !supReady) return;
+          const matches = (invReq.result as InventoryItem[]).filter(i => i.businessId === purchase.businessId && sameProductName(i.name, newPurchase.itemName));
+          if (matches.length > 1) { reason = `Multiple inventory items match ${newPurchase.itemName}. Resolve duplicates first.`; tx.abort(); return; }
+          let stock = matches[0];
+          if (stock && stock.unit && stock.unit.toLowerCase() !== purchase.unit.toLowerCase()) { reason = `Inventory unit for ${newPurchase.itemName} is ${stock.unit}, not ${purchase.unit}.`; tx.abort(); return; }
+          if (stock) { stock.stockQuantity += purchase.quantity; stock.unit ||= purchase.unit; stock.lastUpdated = new Date().toISOString(); }
+          else stock = { id: `inv_${crypto.randomUUID()}`, businessId: purchase.businessId, name: newPurchase.itemName, category: 'Raw Materials', stockQuantity: purchase.quantity, unit: purchase.unit, minStockLevel: 0, reorderAlertEnabled: false, lastUpdated: new Date().toISOString() };
+          inventory.put(stock);
+          tx.objectStore('stock_movements').put({ id: `sm_${crypto.randomUUID()}`, businessId: purchase.businessId, inventoryItemId: stock.id, itemName: stock.name, type: 'purchase', quantity: purchase.quantity, unit: purchase.unit, notes: newPurchase.supplierName ? `Purchase from ${newPurchase.supplierName}` : 'Purchase', createdAt: new Date().toISOString() } satisfies StockMovement);
+          if (newPurchase.supplierName) {
+            const matches = (supReq.result as Supplier[]).filter(s => s.businessId === purchase.businessId && s.name.trim().toLocaleLowerCase() === newPurchase.supplierName.toLocaleLowerCase());
+            if (matches.length > 1) { reason = `Multiple suppliers match ${newPurchase.supplierName}. Resolve duplicates first.`; tx.abort(); return; }
+            const supplier: Supplier = matches[0] || { id: `sup_${crypto.randomUUID()}`, businessId: purchase.businessId, name: newPurchase.supplierName, contact: '', totalPurchases: 0, totalPaid: 0, totalPayable: 0, createdAt: new Date().toISOString() };
+            supplier.totalPurchases += purchase.amount; supplier.totalPaid += purchase.paidAmount; supplier.totalPayable = Math.max(0, supplier.totalPurchases - supplier.totalPaid);
+            suppliers.put(supplier);
+          }
+          tx.objectStore('purchases').put(newPurchase); tx.objectStore('sync_queue').put(sync);
+        };
+        invReq.onsuccess = () => { invReady = true; apply(); }; supReq.onsuccess = () => { supReady = true; apply(); };
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
     });
-
-    // Handle Supplier ledger
-    if (purchase.supplierName) {
-      await this.updateSupplierPurchase(purchase.businessId, purchase.supplierName, purchase.amount, purchase.paidAmount);
-    }
-
-    await this.addToSyncQueue('ADD_PURCHASE', newPurchase);
     this.notify();
     return newPurchase;
   }
@@ -411,7 +454,7 @@ class DatabaseService {
   // --- Inventory ---
   public async getInventory(businessId?: BusinessId): Promise<InventoryItem[]> {
     const all = await this.getAll<InventoryItem>('inventory_items');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((i) => i.businessId === businessId);
   }
 
@@ -492,14 +535,14 @@ class DatabaseService {
 
   public async getStockMovements(businessId?: BusinessId): Promise<StockMovement[]> {
     const all = await this.getAll<StockMovement>('stock_movements');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((sm) => sm.businessId === businessId);
   }
 
   // --- Suppliers & Payables ---
   public async getSuppliers(businessId?: BusinessId): Promise<Supplier[]> {
     const all = await this.getAll<Supplier>('suppliers');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((s) => s.businessId === businessId);
   }
 
@@ -522,74 +565,51 @@ class DatabaseService {
     this.notify();
   }
 
-  private async updateSupplierPurchase(businessId: BusinessId, supplierName: string, purchaseAmount: number, paidAmount: number) {
-    const suppliers = await this.getSuppliers(businessId);
-    let sup = suppliers.find((s) => s.name.toLowerCase() === supplierName.toLowerCase());
-    if (!sup) {
-      sup = await this.addSupplier({
-        businessId,
-        name: supplierName,
-        contact: ''
-      });
-    }
-    sup.totalPurchases += purchaseAmount;
-    sup.totalPaid += paidAmount;
-    sup.totalPayable = Math.max(0, sup.totalPurchases - sup.totalPaid);
-    await this.setItem('suppliers', sup);
-  }
-
+  // Records a payment already made; this does not initiate a bank transfer.
   public async paySupplier(supplierId: string, amount: number, paymentMethod: 'cash' | 'upi' | 'bank' | 'cheque', notes?: string): Promise<SupplierPayment> {
-    const sup = await this.getItem<string, Supplier>('suppliers', supplierId);
-    if (!sup) throw new Error('Supplier not found');
-
-    const payment: SupplierPayment = {
-      id: 'pay_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      supplierId,
-      businessId: sup.businessId,
-      amount,
-      date: new Date().toISOString().split('T')[0],
-      paymentMethod,
-      notes,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    };
-
-    await this.setItem('supplier_payments', payment);
-
-    sup.totalPaid += amount;
-    sup.totalPayable = Math.max(0, sup.totalPurchases - sup.totalPaid);
-    await this.setItem('suppliers', sup);
-
-    // Also log expense under raw materials or supplier payment
-    await this.addExpense({
-      businessId: sup.businessId,
-      amount,
-      category: 'raw_materials',
-      date: payment.date,
-      paymentMethod: paymentMethod === 'cheque' ? 'bank' : paymentMethod,
-      notes: `Supplier Payment to ${sup.name} (${notes || ''})`
+    if (!Number.isFinite(amount) || amount <= 0 || !['cash', 'upi', 'bank', 'cheque'].includes(paymentMethod)) throw new Error('Enter a valid payment amount and method.');
+    if (!this.db) await this.init();
+    let saved: SupplierPayment | undefined;
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not record the supplier payment.';
+      try {
+        const tx = this.db!.transaction(['suppliers', 'supplier_payments', 'expenses', 'sync_queue'], 'readwrite');
+        const suppliers = tx.objectStore('suppliers'); const req = suppliers.get(supplierId);
+        req.onsuccess = () => {
+          const sup = req.result as Supplier | undefined;
+          if (!sup) { reason = 'Supplier not found.'; tx.abort(); return; }
+          if (!Number.isFinite(sup.totalPayable) || amount > sup.totalPayable) { reason = 'Payment exceeds the recorded outstanding amount.'; tx.abort(); return; }
+          const now = new Date();
+          const payment: SupplierPayment = { id: `pay_${crypto.randomUUID()}`, supplierId, businessId: sup.businessId, amount, date: localDate(now), paymentMethod, notes, status: 'completed', createdAt: now.toISOString() };
+          const expense: Expense = { id: `exp_${crypto.randomUUID()}`, businessId: sup.businessId, amount, category: 'raw_materials', date: payment.date, paymentMethod: paymentMethod === 'cheque' ? 'bank' : paymentMethod, notes: `Supplier Payment to ${sup.name}${notes ? ` (${notes})` : ''}`, createdAt: now.toISOString() };
+          const sync: SyncQueueItem = { id: `sync_${crypto.randomUUID()}`, actionType: 'ADD_EXPENSE', payloadJson: JSON.stringify(expense), timestamp: now.toISOString(), retryCount: 0, status: 'pending' };
+          sup.totalPaid += amount; sup.totalPayable = Math.max(0, sup.totalPurchases - sup.totalPaid);
+          suppliers.put(sup); tx.objectStore('supplier_payments').put(payment); tx.objectStore('expenses').put(expense); tx.objectStore('sync_queue').put(sync); saved = payment;
+        };
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
     });
-
+    if (!saved) throw new Error('Could not verify the supplier payment.');
     this.notify();
-    return payment;
+    return saved;
   }
 
   public async getSupplierPayments(businessId?: BusinessId): Promise<SupplierPayment[]> {
     const all = await this.getAll<SupplierPayment>('supplier_payments');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((sp) => sp.businessId === businessId);
   }
 
   // --- Receivables & Customer Credit ---
   public async getReceivables(businessId?: BusinessId): Promise<Receivable[]> {
     const all = await this.getAll<Receivable>('receivables');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((r) => r.businessId === businessId);
   }
 
   public async getPayables(businessId?: BusinessId): Promise<Payable[]> {
     const all = await this.getAll<Payable>('payables');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((p) => p.businessId === businessId);
   }
 
@@ -621,7 +641,8 @@ class DatabaseService {
 
   public async markReceivablePaid(id: string): Promise<void> {
     const rec = await this.getItem<string, Receivable>('receivables', id);
-    if (rec) {
+    if (!rec) throw new Error('Receivable not found.');
+    {
       rec.paidAmount = rec.amount;
       rec.status = 'paid';
       await this.setItem('receivables', rec);
@@ -631,7 +652,8 @@ class DatabaseService {
 
   public async markPayablePaid(id: string): Promise<void> {
     const pay = await this.getItem<string, Payable>('payables', id);
-    if (pay) {
+    if (!pay) throw new Error('Payable not found.');
+    {
       pay.paidAmount = pay.amount;
       pay.status = 'paid';
       await this.setItem('payables', pay);
@@ -642,8 +664,8 @@ class DatabaseService {
   // --- Staff, Attendance & Payroll ---
   public async getStaff(businessId?: BusinessId): Promise<Staff[]> {
     const all = await this.getAll<Staff>('staff');
-    if (!businessId || businessId === 'personal') return all;
-    return all.filter((s) => s.assignedLocation === businessId || s.businessId === businessId);
+    if (!businessId) return all;
+    return all.filter((s) => (s.assignedLocation || s.businessId) === businessId);
   }
 
   public async addStaff(member: Omit<Staff, 'id'>): Promise<Staff> {
@@ -708,7 +730,7 @@ class DatabaseService {
   // --- Manpower Plans ---
   public async getManpowerPlans(businessId?: BusinessId): Promise<ManpowerPlan[]> {
     const all = await this.getAll<ManpowerPlan>('manpower_plans');
-    if (!businessId || businessId === 'personal') return all;
+    if (!businessId) return all;
     return all.filter((mp) => mp.businessId === businessId);
   }
 
@@ -757,46 +779,11 @@ class DatabaseService {
   public async addCateringOrder(
     order: Omit<CateringOrder, 'id' | 'createdAt' | 'pendingAmount'>
   ): Promise<CateringOrder> {
-    const pendingAmount = Math.max(0, order.totalAmount - order.advanceAmount);
-    const newOrder: CateringOrder = {
-      ...order,
-      pendingAmount,
-      id: 'cat_ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-
+    if (!order.customerName.trim() || !order.eventDate || !Number.isInteger(order.guestCount) || order.guestCount <= 0 || !Number.isFinite(order.totalAmount) || order.totalAmount <= 0 || !Number.isFinite(order.advanceAmount) || order.advanceAmount < 0 || order.advanceAmount > order.totalAmount) throw new Error('Enter valid catering booking details and advance.');
+    const newOrder: CateringOrder = { ...order, pendingAmount: order.totalAmount - order.advanceAmount, id: `cat_ord_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    // The advance date, payment method and reminder time are not provided by this form.
+    // Do not invent a sale or a scheduled reminder from the booking.
     await this.setItem('catering_orders', newOrder);
-
-    // Also record sale entry under Gopal Caterers for advance received
-    if (order.advanceAmount > 0) {
-      await this.addSale({
-        businessId: 'gopal-caterers',
-        amount: order.advanceAmount,
-        date: order.eventDate,
-        paymentMethod: 'upi',
-        customerName: order.customerName,
-        items: [
-          {
-            id: 'item_cat_1',
-            itemName: `Catering Advance - ${order.eventType.toUpperCase()} (${order.guestCount} Pax)`,
-            quantity: 1,
-            unit: 'event',
-            price: order.advanceAmount,
-            total: order.advanceAmount
-          }
-        ],
-        notes: `Advance for ${order.venue}`
-      });
-    }
-
-    // Add reminder for event date
-    await this.addReminder({
-      title: `Catering Event: ${order.customerName} (${order.eventType.toUpperCase()}) - ${order.guestCount} Guests`,
-      dateTime: `${order.eventDate}T09:00:00`,
-      businessId: 'gopal-caterers',
-      priority: 'high'
-    });
-
     this.notify();
     return newOrder;
   }
@@ -819,12 +806,27 @@ class DatabaseService {
   }
 
   public async assignStaffToCateringOrder(orderId: string, staffIds: string[]): Promise<void> {
-    const order = await this.getItem<string, CateringOrder>('catering_orders', orderId);
-    if (order) {
-      order.assignedStaffIds = staffIds;
-      await this.setItem('catering_orders', order);
-      this.notify();
-    }
+    if (!this.db) await this.init();
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not save allocation.';
+      try {
+        const tx = this.db!.transaction(['catering_orders', 'staff', 'attendance'], 'readwrite');
+        const orders = tx.objectStore('catering_orders');
+        const orderReq = orders.getAll(); const staffReq = tx.objectStore('staff').getAll(); const attendanceReq = tx.objectStore('attendance').getAll(); let ready = 0;
+        const apply = () => {
+          if (++ready !== 3) return;
+          const all = orderReq.result as CateringOrder[]; const order = all.find(o => o.id === orderId);
+          const employees = staffReq.result as Staff[]; const attendance = attendanceReq.result as Attendance[];
+          if (!order) { reason = 'Booking no longer exists.'; tx.abort(); return; }
+          if (new Set(staffIds).size !== staffIds.length || staffIds.some(id => !employees.some(s => s.id === id))) { reason = 'A selected staff member no longer exists.'; tx.abort(); return; }
+          if (staffIds.some(id => all.some(o => o.id !== orderId && o.status !== 'cancelled' && o.eventDate === order.eventDate && o.assignedStaffIds.includes(id)) || attendance.some(a => a.staffId === id && a.date === order.eventDate && (a.status === 'absent' || a.status === 'weekly_off')))) { reason = 'A selected staff member is unavailable for this date. Review the allocation.'; tx.abort(); return; }
+          order.assignedStaffIds = [...staffIds]; orders.put(order);
+        };
+        orderReq.onsuccess = apply; staffReq.onsuccess = apply; attendanceReq.onsuccess = apply;
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
+    });
+    this.notify();
   }
 
   // --- Advances & Deductions ---
@@ -835,27 +837,26 @@ class DatabaseService {
   }
 
   public async addStaffAdvance(adv: Omit<StaffAdvance, 'id' | 'createdAt'>): Promise<StaffAdvance> {
-    const newAdv: StaffAdvance = {
-      ...adv,
-      id: 'adv_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-    await this.setItem('staff_advances', newAdv);
-
-    // Adjust staff active advance balance
-    const staff = await this.getItem<string, Staff>('staff', adv.staffId);
-    if (staff) {
-      const currentAdv = staff.advanceBalance || 0;
-      if (adv.type === 'advance') {
-        staff.advanceBalance = currentAdv + adv.amount;
-      } else {
-        staff.advanceBalance = Math.max(0, currentAdv - adv.amount);
-      }
-      await this.setItem('staff', staff);
-    }
-
-    this.notify();
-    return newAdv;
+    if (!Number.isFinite(adv.amount) || adv.amount <= 0) throw new Error('Enter a positive advance amount.');
+    if (!this.db) await this.init();
+    const newAdv: StaffAdvance = { ...adv, id: `adv_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not record staff advance.';
+      try {
+        const tx = this.db!.transaction(['staff_advances', 'staff'], 'readwrite'); const staffStore = tx.objectStore('staff');
+        const request = staffStore.get(adv.staffId);
+        request.onsuccess = () => {
+          const staff = request.result as Staff | undefined;
+          if (!staff || (staff.assignedLocation || staff.businessId) !== adv.businessId) { reason = 'Staff member or assigned workspace changed.'; tx.abort(); return; }
+          const balance = staff.advanceBalance || 0;
+          if (adv.type === 'deduction' && adv.amount > balance) { reason = 'Deduction cannot exceed the advance balance.'; tx.abort(); return; }
+          staff.advanceBalance = adv.type === 'advance' ? balance + adv.amount : balance - adv.amount;
+          staffStore.put(staff); tx.objectStore('staff_advances').put(newAdv);
+        };
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
+    });
+    this.notify(); return newAdv;
   }
 
   // --- Attendance ---
@@ -877,7 +878,7 @@ class DatabaseService {
   public async getAttendance(businessId?: BusinessId, date?: string): Promise<Attendance[]> {
     const all = await this.getAll<Attendance>('attendance');
     let res = all;
-    if (businessId && businessId !== 'personal') {
+    if (businessId) {
       res = res.filter((a) => a.businessId === businessId);
     }
     if (date) {
@@ -890,7 +891,7 @@ class DatabaseService {
   public async getSalaries(businessId?: BusinessId, period?: string): Promise<SalaryRecord[]> {
     const all = await this.getAll<SalaryRecord>('salaries');
     let res = all;
-    if (businessId && businessId !== 'personal') {
+    if (businessId) {
       res = res.filter((s) => s.businessId === businessId);
     }
     if (period) {
@@ -900,34 +901,34 @@ class DatabaseService {
   }
 
   public async recordSalaryPayment(sal: Omit<SalaryRecord, 'id' | 'createdAt'>): Promise<SalaryRecord> {
-    const newSal: SalaryRecord = {
-      ...sal,
-      id: 'sal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      createdAt: new Date().toISOString()
-    };
-    await this.setItem('salaries', newSal);
-
-    // Deduct advance balance if advance was deducted in this salary payment
-    if (sal.advanceDeducted > 0) {
-      const staff = await this.getItem<string, Staff>('staff', sal.staffId);
-      if (staff) {
-        staff.advanceBalance = Math.max(0, (staff.advanceBalance || 0) - sal.advanceDeducted);
-        await this.setItem('staff', staff);
-      }
-    }
-
-    // Also record business expense for salary payment
-    await this.addExpense({
-      businessId: sal.businessId,
-      amount: sal.netPaid,
-      category: 'staff_salary',
-      date: sal.date,
-      paymentMethod: sal.paymentMethod,
-      notes: `Staff Salary Payment to ${sal.staffName || 'Staff'} (${sal.period})`
+    if (![sal.amount, sal.advanceDeducted, sal.netPaid, sal.overtimePay ?? 0, sal.otherDeductions ?? 0].every(n => Number.isFinite(n) && n >= 0) || !sal.period || sal.status !== 'paid') throw new Error('Enter valid payroll amounts and period.');
+    if (!this.db) await this.init();
+    const newSal: SalaryRecord = { ...sal, id: `sal_${crypto.randomUUID()}`, createdAt: new Date().toISOString() };
+    await new Promise<void>((resolve, reject) => {
+      let reason = 'Could not record salary.';
+      try {
+        const tx = this.db!.transaction(['salaries', 'staff', 'expenses', 'sync_queue'], 'readwrite');
+        const salaries = tx.objectStore('salaries'); const staffStore = tx.objectStore('staff');
+        const salReq = salaries.getAll(); const staffReq = staffStore.get(sal.staffId); let ready = 0;
+        const apply = () => {
+          if (++ready !== 2) return;
+          const staff = staffReq.result as Staff | undefined;
+          if (!staff || (staff.assignedLocation || staff.businessId) !== sal.businessId) { reason = 'Staff member or assigned workspace changed. Review payroll.'; tx.abort(); return; }
+          if ((salReq.result as SalaryRecord[]).some(existing => existing.staffId === sal.staffId && existing.period === sal.period && existing.status === 'paid')) { reason = 'A paid salary is already recorded for this staff member and period.'; tx.abort(); return; }
+          if (sal.advanceDeducted > (staff.advanceBalance || 0)) { reason = 'The advance balance changed. Recalculate payroll.'; tx.abort(); return; }
+          if (sal.advanceDeducted > 0) { staff.advanceBalance = (staff.advanceBalance || 0) - sal.advanceDeducted; staffStore.put(staff); }
+          salaries.put(newSal);
+          if (sal.netPaid > 0) {
+            const expense: Expense = { id:`exp_${crypto.randomUUID()}`, businessId:sal.businessId, amount:sal.netPaid, category:'staff_salary', date:sal.date, paymentMethod:sal.paymentMethod, notes:`Staff Salary Payment to ${sal.staffName || 'Staff'} (${sal.period})`, createdAt:new Date().toISOString() };
+            const sync: SyncQueueItem = { id:`sync_${crypto.randomUUID()}`, actionType:'ADD_EXPENSE', payloadJson:JSON.stringify(expense), timestamp:new Date().toISOString(), retryCount:0, status:'pending' };
+            tx.objectStore('expenses').put(expense); tx.objectStore('sync_queue').put(sync);
+          }
+        };
+        salReq.onsuccess = apply; staffReq.onsuccess = apply;
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error || new Error(reason)); tx.onerror = () => reject(tx.error || new Error(reason));
+      } catch (error) { reject(error); }
     });
-
-    this.notify();
-    return newSal;
+    this.notify(); return newSal;
   }
 
   // --- Personal Finance & Contacts ---
@@ -1015,13 +1016,6 @@ class DatabaseService {
     };
     await this.setItem('reminders', newRem);
 
-    // Also add to system notifications
-    await this.addNotification({
-      title: `Reminder: ${newRem.title}`,
-      message: `Scheduled for ${new Date(newRem.dateTime).toLocaleString()}`,
-      type: 'reminder'
-    });
-
     this.notify();
     return newRem;
   }
@@ -1092,7 +1086,7 @@ class DatabaseService {
     this.notify();
   }
 
-  // --- Sync Queue & Backup ---
+  // --- Sync Queue ---
   private async addToSyncQueue(actionType: string, payload: any): Promise<void> {
     const item: SyncQueueItem = {
       id: 'sync_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
@@ -1109,62 +1103,25 @@ class DatabaseService {
     return await this.getAll<SyncQueueItem>('sync_queue');
   }
 
-  public async exportDatabaseJSON(): Promise<string> {
-    const stores = [
-      'sales', 'expenses', 'purchases', 'inventory_items', 'stock_movements',
-      'suppliers', 'supplier_payments', 'receivables', 'payables', 'personal_transactions',
-      'staff', 'staff_transfers', 'manpower_plans', 'catering_events', 'catering_orders', 'staff_advances',
-      'attendance', 'salaries', 'tasks', 'reminders', 'notes', 'notifications', 'app_settings'
-    ];
-    const exportData: Record<string, any> = {};
-
-    for (const store of stores) {
-      exportData[store] = await this.getAll(store);
-    }
-
-    return JSON.stringify({
-      version: DB_VERSION,
-      appName: 'GopalAI Assistant',
-      exportedAt: new Date().toISOString(),
-      data: exportData
-    }, null, 2);
-  }
-
-  public async importDatabaseJSON(jsonStr: string): Promise<boolean> {
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (!parsed.data) return false;
-
-      const data = parsed.data;
-      for (const storeName of Object.keys(data)) {
-        if (Array.isArray(data[storeName])) {
-          for (const item of data[storeName]) {
-            await this.setItem(storeName, item);
-          }
-        }
-      }
-      this.notify();
-      return true;
-    } catch (err) {
-      console.error('Failed to import database:', err);
-      return false;
-    }
-  }
-
   // Clear all data (Reset to Strict Zero State)
   public async clearAllData(): Promise<void> {
     const stores = [
       'sales', 'expenses', 'purchases', 'inventory_items', 'stock_movements',
-      'suppliers', 'supplier_payments', 'receivables', 'payables', 'personal_transactions',
+      'suppliers', 'supplier_payments', 'receivables', 'payables', 'personal_transactions', 'personal_contacts',
       'staff', 'staff_transfers', 'manpower_plans', 'catering_events', 'catering_orders', 'staff_advances',
       'attendance', 'salaries', 'tasks', 'reminders', 'notes', 'notifications',
-      'ai_command_history', 'sync_queue'
+      'ai_command_history', 'background_jobs', 'sync_queue'
     ];
-    for (const store of stores) {
-      if (!this.db) await this.init();
-      const tx = this.db!.transaction(store, 'readwrite');
-      tx.objectStore(store).clear();
-    }
+    if (!this.db) await this.init();
+    await new Promise<void>((resolve, reject) => {
+      try {
+        const tx = this.db!.transaction(stores, 'readwrite');
+        for (const store of stores) tx.objectStore(store).clear();
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error || new Error('Clearing data was interrupted; no records were cleared.'));
+        tx.onerror = () => reject(tx.error || new Error('Could not clear records.'));
+      } catch (error) { reject(error); }
+    });
     this.notify();
   }
 }

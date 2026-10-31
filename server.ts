@@ -3,6 +3,10 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { parseLocalCommand } from './src/services/ruleParser';
+import type { BusinessId } from './src/types/database';
+import { timingSafeEqual } from 'node:crypto';
+import { generatePosterBackground, validatePosterRequest } from './src/server/posterProvider';
 
 dotenv.config();
 
@@ -12,7 +16,31 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use('/api/poster', express.json({ limit: '13mb' }));
 app.use(express.json());
+
+// This endpoint is fail-closed until an owner-authenticating reverse proxy is configured.
+let posterRequestInFlight = false;
+let lastPosterRequest = 0;
+app.post('/api/poster/generate', async (req, res) => {
+  const secret = process.env.POSTER_TRUSTED_PROXY_SECRET;
+  const key = process.env.POSTER_IMAGE_API_KEY;
+  if (!secret || !key) return res.status(503).json({ error: 'Poster generation is not configured. No image was generated.' });
+  const supplied = req.get('X-GopalAI-Verified-Owner') || '';
+  const expected = Buffer.from(secret), actual = Buffer.from(supplied);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return res.status(403).json({ error: 'Owner authentication is required.' });
+  let request;
+  try { request = validatePosterRequest(req.body); }
+  catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid design request.' }); }
+  if (posterRequestInFlight || Date.now() - lastPosterRequest < 10000) return res.status(429).json({ error: 'Please wait before generating another design.' });
+  posterRequestInFlight = true; lastPosterRequest = Date.now();
+  try {
+    const image = await generatePosterBackground(request, key);
+    return res.json({ image });
+  } catch {
+    return res.status(502).json({ error: 'Image generation failed. Please try again later.' });
+  } finally { posterRequestInFlight = false; }
+});
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -71,7 +99,7 @@ Available Actions:
 
 Output MUST follow JSON schema.
 Requires owner confirmation = true for any monetary changes or phone call/app launch actions.
-speech_response should be friendly, clear, natural Hinglish/English confirming what action will be done or answering the query.
+Never invent missing details. Exclude coding or programming assistance. Respond in the language used by the user.
 `;
 
     let parsedResult;
@@ -94,6 +122,7 @@ speech_response should be friendly, clear, natural Hinglish/English confirming w
                 type: Type.OBJECT,
                 properties: {
                   amount: { type: Type.NUMBER },
+                  date: { type: Type.STRING, description: 'Explicit transaction date, YYYY-MM-DD' },
                   item_name: { type: Type.STRING },
                   quantity: { type: Type.NUMBER },
                   unit: { type: Type.STRING },
@@ -124,48 +153,9 @@ speech_response should be friendly, clear, natural Hinglish/English confirming w
       parsedResult = JSON.parse(cleanedText || '{}');
     } catch (aiErr: any) {
       console.warn('Gemini API call warning, using server rule parser:', aiErr?.message || aiErr);
-      // Smart server rule-based fallback for standard voice commands
-      const lower = prompt.toLowerCase();
-      const amountMatch = lower.match(/(\d+)\s*(rupaye|rs|rupees|ki|ka)?/);
-      const amount = amountMatch ? parseInt(amountMatch[1], 10) : 0;
-
-      let targetBus = context?.currentBusinessId || 'jain-sweets';
-      if (lower.includes('jain')) targetBus = 'jain-sweets';
-      else if (lower.includes('paan')) targetBus = 'paan-bai';
-      else if (lower.includes('kesar')) targetBus = 'kesarwadi';
-
-      if (lower.includes('sale') || lower.includes('becha') || lower.includes('bikri')) {
-        parsedResult = {
-          action: 'ADD_SALE',
-          business_id: targetBus,
-          requires_owner_confirmation: true,
-          speech_response: `Recording sale of ₹${amount} for ${targetBus}. Confirm?`,
-          parameters: { amount }
-        };
-      } else if (lower.includes('kharch') || lower.includes('expense') || lower.includes('paisa gaya')) {
-        parsedResult = {
-          action: 'ADD_EXPENSE',
-          business_id: targetBus,
-          requires_owner_confirmation: true,
-          speech_response: `Recording expense of ₹${amount}. Confirm?`,
-          parameters: { amount, category: 'other' }
-        };
-      } else if (lower.includes('call') || lower.includes('lagao')) {
-        const contactName = prompt.replace(/(call|lagao|ko|karo)/gi, '').trim();
-        parsedResult = {
-          action: 'CALL_CONTACT',
-          requires_owner_confirmation: true,
-          speech_response: `Initiate call to ${contactName}?`,
-          parameters: { contact_name: contactName }
-        };
-      } else {
-        parsedResult = {
-          action: 'UNKNOWN_QUERY',
-          requires_owner_confirmation: false,
-          speech_response: `Command received: "${prompt}". Proceeding with action.`,
-          parameters: {}
-        };
-      }
+      const candidate = context?.currentBusinessId;
+      const business: BusinessId = ['jain-sweets', 'paan-bai', 'kesarwadi', 'gopal-caterers', 'personal'].includes(candidate) ? candidate : 'jain-sweets';
+      parsedResult = parseLocalCommand(prompt, business);
     }
 
     return res.json({ success: true, result: parsedResult });

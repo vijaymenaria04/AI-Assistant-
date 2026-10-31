@@ -1,3 +1,6 @@
+import { displayProductName } from '../services/productNames';
+import { isLowStock } from '../services/inventory';
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import {
   Bell,
@@ -39,7 +42,7 @@ interface ExtendedAlert {
   actionScreen?: string;
 }
 
-export const NotificationsView: React.FC = () => {
+export const NotificationsView: React.FC<{ currentBusinessId: BusinessId }> = ({ currentBusinessId }) => {
   const { t } = useTranslation();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
@@ -79,11 +82,11 @@ export const NotificationsView: React.FC = () => {
   const generatedAlerts: ExtendedAlert[] = [];
 
   // 1. Low Stock Alerts
-  inventory.forEach((item) => {
-    if (item.stockQuantity <= item.minStockLevel) {
+  inventory.filter(item => item.businessId === currentBusinessId).forEach((item) => {
+    if (isLowStock(item)) {
       generatedAlerts.push({
         id: `alert_stock_${item.id}`,
-        title: `Low Stock Alert: ${item.name}`,
+        title: `${translateText('Low Stock Alert')}: ${displayProductName(item.name)}`,
         message: `Stock level is ${item.stockQuantity} ${item.unit} (Reorder threshold: ${item.minStockLevel} ${item.unit})`,
         type: 'low_stock',
         businessId: item.businessId,
@@ -95,7 +98,7 @@ export const NotificationsView: React.FC = () => {
   });
 
   // 2. Pending Supplier Payment Dues
-  suppliers.forEach((sup) => {
+  suppliers.filter(sup => sup.businessId === currentBusinessId).forEach((sup) => {
     const due = Math.max(0, sup.totalPurchases - sup.totalPaid);
     if (due > 0) {
       generatedAlerts.push({
@@ -112,12 +115,12 @@ export const NotificationsView: React.FC = () => {
   });
 
   // 3. Active Upcoming Reminders
-  reminders.forEach((rem) => {
+  reminders.filter(rem => rem.businessId === currentBusinessId).forEach((rem) => {
     if (rem.status === 'active') {
       generatedAlerts.push({
         id: `alert_rem_${rem.id}`,
         title: `Reminder: ${rem.title}`,
-        message: `Scheduled for ${new Date(rem.dateTime).toLocaleString()} (${BUSINESSES[rem.businessId || 'jain-sweets']?.name})`,
+        message: `Scheduled for ${new Date(rem.dateTime).toLocaleString()} (${BUSINESSES[currentBusinessId]?.name})`,
         type: 'reminder',
         businessId: rem.businessId,
         date: rem.createdAt || new Date().toISOString(),
@@ -128,12 +131,12 @@ export const NotificationsView: React.FC = () => {
   });
 
   // 4. Incomplete Routine Tasks
-  tasks.forEach((t) => {
+  tasks.filter(task => task.businessId === currentBusinessId).forEach((t) => {
     if (!t.completed) {
       generatedAlerts.push({
         id: `alert_task_${t.id}`,
         title: `Pending Task: ${t.title}`,
-        message: `${t.description || 'Action required'} for ${BUSINESSES[t.businessId || 'jain-sweets']?.name}`,
+        message: `${t.description || 'Action required'} for ${BUSINESSES[currentBusinessId]?.name}`,
         type: 'task',
         businessId: t.businessId,
         date: t.createdAt || new Date().toISOString(),
@@ -144,7 +147,8 @@ export const NotificationsView: React.FC = () => {
   });
 
   // 5. Stored Notifications
-  notifications.forEach((n) => {
+  // Old reminder notifications are unscoped duplicates; the source reminders above remain visible.
+  notifications.filter(n => n.type === 'system' || n.type === 'sync').forEach((n) => {
     generatedAlerts.push({
       id: n.id,
       title: n.title,
@@ -200,10 +204,10 @@ export const NotificationsView: React.FC = () => {
         <div>
           <h1 className="text-lg font-extrabold text-amber-600 dark:text-amber-400 flex items-center gap-2">
             <Bell className="w-5 h-5" />
-            <span>GopalAI Alerts & Notifications</span>
+            <span>{t('alertsTitle')}</span>
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Real-time System Alerts & Operational Reminders
+            {t('alertsSubtitle')}
           </p>
         </div>
 
@@ -213,11 +217,12 @@ export const NotificationsView: React.FC = () => {
             className="py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 transition border border-amber-500/30"
           >
             <Check className="w-4 h-4 stroke-[3]" />
-            <span>Mark All Read</span>
+            <span>{t('markAllRead')}</span>
           </button>
         )}
       </div>
 
+      <p className="text-xs text-slate-500 dark:text-slate-400">{translateText("Read status lasts for this session only.")}</p>
       {/* Sync Queue Status Banner */}
       <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
@@ -225,16 +230,13 @@ export const NotificationsView: React.FC = () => {
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">IndexedDB Local Storage Active</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              Offline sync queue items pending: {syncQueue.length}
+            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{translateText("IndexedDB Local Storage Active")}</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">{translateText("Device-wide local queue (no cloud sync configured):") + " "}{syncQueue.length}
             </div>
           </div>
         </div>
 
-        <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold uppercase">
-          Synced
-        </span>
+        <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold uppercase">{translateText("Synced")}</span>
       </div>
 
       {/* Category Filter Pills */}
@@ -251,16 +253,16 @@ export const NotificationsView: React.FC = () => {
               }`}
             >
               {cat === 'all'
-                ? `All Alerts (${generatedAlerts.length})`
+                ? `${translateText("All Alerts")} (${generatedAlerts.length})`
                 : cat === 'low_stock'
-                ? 'Low Stock'
+                ? translateText("Low Stock")
                 : cat === 'payment_due'
-                ? 'Supplier Dues'
+                ? translateText("Supplier Dues")
                 : cat === 'reminder'
-                ? 'Reminders'
+                ? translateText("Reminders")
                 : cat === 'task'
-                ? 'Tasks'
-                : 'Sync & System'}
+                ? translateText("Tasks")
+                : translateText("Sync & System")}
             </button>
           ))}
         </div>
@@ -277,7 +279,7 @@ export const NotificationsView: React.FC = () => {
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
-              {r}
+              {translateText(r === 'all' ? 'All' : r === 'unread' ? 'Unread' : 'Read')}
             </button>
           ))}
         </div>
@@ -288,10 +290,8 @@ export const NotificationsView: React.FC = () => {
         {filteredAlerts.length === 0 ? (
           <div className="p-8 text-center rounded-2xl bg-white/60 dark:bg-slate-900/60 border border-dashed border-slate-300 dark:border-slate-800 space-y-2">
             <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto stroke-1" />
-            <div className="text-xs font-bold text-slate-800 dark:text-slate-200">All Systems Operational</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              No active alerts or low stock warnings in your database.
-            </div>
+            <div className="text-xs font-bold text-slate-800 dark:text-slate-200">{translateText("All Systems Operational")}</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">{translateText("No active alerts or low stock warnings in your database.")}</div>
           </div>
         ) : (
           filteredAlerts.map((alert) => (
@@ -314,9 +314,7 @@ export const NotificationsView: React.FC = () => {
                       {alert.title}
                     </span>
                     {!alert.read && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] uppercase">
-                        New
-                      </span>
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] uppercase">{translateText("New")}</span>
                     )}
                   </div>
 
@@ -349,7 +347,7 @@ export const NotificationsView: React.FC = () => {
                       ? 'border-slate-300 dark:border-slate-700 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                       : 'border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
                   }`}
-                  title="Toggle Read/Unread"
+                  title={translateText("Toggle Read/Unread")}
                 >
                   <Check className="w-3.5 h-3.5" />
                 </button>

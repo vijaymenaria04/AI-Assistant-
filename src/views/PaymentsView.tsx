@@ -1,3 +1,4 @@
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import {
   CreditCard,
@@ -29,16 +30,17 @@ import {
   SupplierPayment
 } from '../types/database';
 import { androidAutomation } from '../services/androidAutomation';
-import { aiAgent } from '../services/aiAgent';
+import { aiAgent, type ParsedAgentResult } from '../services/aiAgent';
 import { useTranslation } from '../services/i18n';
 
 interface PaymentsViewProps {
   currentBusinessId: BusinessId;
+  onRequestConfirmation?: (result: ParsedAgentResult) => void;
 }
 
 type DateFilter = 'all' | 'today' | 'month' | 'year';
 
-export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId }) => {
+export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId, onRequestConfirmation }) => {
   const { t } = useTranslation();
   const [selectedBusinessId, setSelectedBusinessId] = useState<BusinessId | 'all'>(currentBusinessId);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
@@ -53,7 +55,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
   const [showAddForm, setShowAddForm] = useState(false);
   const [recordKind, setRecordKind] = useState<'receivable' | 'payable'>('receivable');
   const [targetBusinessId, setTargetBusinessId] = useState<BusinessId>(
-    currentBusinessId === 'personal' ? 'jain-sweets' : currentBusinessId
+    currentBusinessId
   );
   const [custName, setCustName] = useState('');
   const [amount, setAmount] = useState('');
@@ -97,9 +99,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
 
   useEffect(() => {
     setSelectedBusinessId(currentBusinessId);
-    if (currentBusinessId !== 'personal') {
-      setTargetBusinessId(currentBusinessId);
-    }
+    setTargetBusinessId(currentBusinessId);
   }, [currentBusinessId]);
 
   useEffect(() => {
@@ -193,11 +193,10 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
     setIsProcessingAI(true);
     setAiFeedback(null);
 
-    const activeBiz = selectedBusinessId === 'all' ? 'jain-sweets' : selectedBusinessId;
+    const activeBiz = selectedBusinessId === 'all' ? currentBusinessId : selectedBusinessId;
     try {
-      const res = await aiAgent.processCommand(aiCommandText, activeBiz);
-      androidAutomation.playSoundEffect('success');
-      setAiFeedback(res.result.speech_response);
+      const message = await aiAgent.runQuickCommand(aiCommandText, activeBiz, onRequestConfirmation);
+      setAiFeedback(message);
       setAiCommandText('');
       await loadData();
     } catch (err: any) {
@@ -211,13 +210,14 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
   const sendReminder = (name: string, phone: string | undefined, amt: number, kind: 'receivable' | 'payable') => {
     const message = kind === 'receivable'
       ? `Namaste ${name}, kindly settle your pending balance of ₹${amt.toLocaleString('en-IN')}. Thank you!`
-      : `Namaste ${name}, payment of ₹${amt.toLocaleString('en-IN')} is scheduled. Kindly confirm bank/UPI details.`;
+      : `Namaste ${name}, regarding the outstanding balance of ₹${amt.toLocaleString('en-IN')}, kindly confirm your payment details.`;
     
     if (phone) {
       const cleanPhone = phone.replace(/[^\d]/g, '');
-      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+      if (cleanPhone.length < 7 || cleanPhone.length > 15) { setAiFeedback('Enter a valid phone number before sending a reminder.'); return; }
+      if (window.confirm(`Open WhatsApp with this message?\n\n${message}`)) window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
     } else {
-      androidAutomation.initiatePhoneCall(name);
+      setAiFeedback('No phone number is recorded for this contact.');
     }
   };
 
@@ -231,37 +231,37 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-black text-amber-600 dark:text-amber-400">
-            Payment Management & Credit Ledger
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Customer receivables, supplier payables, owner confirmation, and duplicate prevention
-          </p>
+          <h1 className="text-xl font-black text-amber-600 dark:text-amber-400">{translateText("Payment Management & Credit Ledger")}</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{translateText("Customer receivables, supplier payables, owner confirmation, and duplicate prevention")}</p>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="py-2 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md hover:brightness-110 active:scale-95 transition"
         >
           <Plus className="w-4 h-4 stroke-[3]" />
-          <span>Add Credit Entry</span>
+          <span>{translateText("Add Credit Entry")}</span>
         </button>
       </div>
 
       {/* Workspace Selector Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
         {[
-          { id: 'jain-sweets', name: 'Jain Sweets', color: 'text-amber-500' },
-          { id: 'paan-bai', name: 'Paan Bai Canteen', color: 'text-emerald-500' },
-          { id: 'kesarwadi', name: 'Kesarwadi Canteen', color: 'text-orange-500' },
-          { id: 'gopal-caterers', name: 'Gopal Caterers', color: 'text-purple-500' },
-          { id: 'personal', name: 'Personal Wallet', color: 'text-blue-500' },
-          { id: 'all', name: 'All Accounts', color: 'text-indigo-500' }
+          { id: 'jain-sweets', name: translateText('Jain Sweets'), color: 'text-amber-500' },
+          { id: 'paan-bai', name: translateText('Paan Bai Canteen'), color: 'text-emerald-500' },
+          { id: 'kesarwadi', name: translateText('Kesarwadi Canteen'), color: 'text-orange-500' },
+          { id: 'gopal-caterers', name: translateText('Gopal Caterers'), color: 'text-purple-500' },
+          { id: 'personal', name: translateText('Personal'), color: 'text-blue-500' },
+          { id: 'all', name: translateText('All Accounts'), color: 'text-indigo-500' }
         ].map((biz) => {
           const isActive = selectedBusinessId === biz.id;
           return (
             <button
               key={biz.id}
-              onClick={() => setSelectedBusinessId(biz.id as any)}
+              onClick={() => {
+                if (biz.id !== selectedBusinessId && showAddForm && !window.confirm(translateText('Change workspace for the open form? Review its target before saving.'))) return;
+                setSelectedBusinessId(biz.id as BusinessId | 'all');
+                if (biz.id !== 'all') setTargetBusinessId(biz.id as BusinessId);
+              }}
               className={`py-2 px-3.5 rounded-xl font-bold text-xs flex items-center gap-2 whitespace-nowrap transition ${
                 isActive
                   ? 'bg-amber-500 text-slate-950 shadow'
@@ -284,7 +284,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
               type="text"
               value={aiCommandText}
               onChange={(e) => setAiCommandText(e.target.value)}
-              placeholder="Payment Command (e.g. Ramesh se 1500 lene hai, Doctor uncle ko 2000 paid...)"
+              placeholder={translateText("Payment Command (e.g. Ramesh se 1500 lene hai, Doctor uncle ko 2000 paid...)")}
               className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none"
             />
             <button
@@ -293,7 +293,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
               className="py-1.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition disabled:opacity-50 shrink-0"
             >
               {isProcessingAI ? <span className="animate-spin text-xs">⏳</span> : <Send className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">Execute</span>
+              <span className="hidden sm:inline">{translateText("Execute")}</span>
             </button>
           </div>
         </div>
@@ -309,29 +309,29 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {/* Customer Receivables */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Customer Credit (Lene Hai)</div>
+          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{translateText("Customer Credit (Lene Hai)")}</div>
           <div className="text-lg font-black text-amber-600 dark:text-amber-400 mt-0.5">
             ₹{totalReceivables.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">{receivables.filter(r => r.status !== 'paid').length} pending accounts</div>
+          <div className="text-[10px] text-slate-400 mt-0.5">{receivables.filter(r => r.status !== 'paid').length}{" " + translateText("pending accounts")}</div>
         </div>
 
         {/* Pending Payables */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Pending Dues (Dene Hai)</div>
+          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{translateText("Pending Dues (Dene Hai)")}</div>
           <div className="text-lg font-black text-purple-600 dark:text-purple-400 mt-0.5">
             ₹{totalPayables.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">{payables.filter(p => p.status !== 'paid').length} pending payables</div>
+          <div className="text-[10px] text-slate-400 mt-0.5">{payables.filter(p => p.status !== 'paid').length}{" " + translateText("pending payables")}</div>
         </div>
 
         {/* Supplier Paid Total */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm col-span-2 sm:col-span-1">
-          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Supplier Payments</div>
+          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{translateText("Total Supplier Payments")}</div>
           <div className="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
             ₹{totalSupplierPaid.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">{supplierPayments.length} transactions executed</div>
+          <div className="text-[10px] text-slate-400 mt-0.5">{supplierPayments.length}{" " + translateText("transactions executed")}</div>
         </div>
       </div>
 
@@ -339,69 +339,69 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
       {showAddForm && (
         <form onSubmit={(e) => handleRecordSubmit(e)} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-amber-500/40 space-y-3 shadow-lg animate-in fade-in">
           <div className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider flex justify-between items-center">
-            <span>Add Credit / Payable Entry</span>
-            <span className="text-[10px] text-slate-400">Idempotent Protected</span>
+            <span>{translateText("Add Credit / Payable Entry")}</span>
+            <span className="text-[10px] text-slate-400">{translateText("Idempotent Protected")}</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Type*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Type*")}</label>
               <select
                 value={recordKind}
                 onChange={(e) => setRecordKind(e.target.value as any)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="receivable">Receivable (Lene Hai - Get Money)</option>
-                <option value="payable">Payable (Dene Hai - Pay Money)</option>
+                <option value="receivable">{translateText("Receivable (Lene Hai - Get Money)")}</option>
+                <option value="payable">{translateText("Payable (Dene Hai - Pay Money)")}</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Target Account*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Target Account*")}</label>
               <select
                 value={targetBusinessId}
                 onChange={(e) => setTargetBusinessId(e.target.value as BusinessId)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="jain-sweets">Jain Sweets</option>
-                <option value="paan-bai">Paan Bai Canteen</option>
-                <option value="kesarwadi">Kesarwadi Canteen</option>
-                <option value="gopal-caterers">Gopal Caterers</option>
-                <option value="personal">Personal Finance</option>
+                <option value="jain-sweets">{translateText("Jain Sweets")}</option>
+                <option value="paan-bai">{translateText("Paan Bai Canteen")}</option>
+                <option value="kesarwadi">{translateText("Kesarwadi Canteen")}</option>
+                <option value="gopal-caterers">{translateText("Gopal Caterers")}</option>
+                <option value="personal">{translateText("Personal")}</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Name (Customer / Vendor)*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Name (Customer / Vendor)*")}</label>
               <input
                 type="text"
                 required
                 value={custName}
                 onChange={(e) => setCustName(e.target.value)}
-                placeholder="e.g. Ramesh Sharma"
+                placeholder={translateText("e.g. Ramesh Sharma")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Amount (₹)*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Amount (₹)*")}</label>
               <input
                 type="number"
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="e.g. 1500"
+                placeholder={translateText("e.g. 1500")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Phone Number (Optional)</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Phone Number (Optional)")}</label>
               <input
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. 9876543210"
+                placeholder={translateText("e.g. 9876543210")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Due Date (Optional)</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Due Date (Optional)")}</label>
               <input
                 type="date"
                 value={dueDate}
@@ -415,15 +415,11 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
               type="button"
               onClick={() => setShowAddForm(false)}
               className="py-2 px-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-            >
-              Cancel
-            </button>
+            >{translateText("Cancel")}</button>
             <button
               type="submit"
               className="py-2 px-4 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-600 transition"
-            >
-              Save Payment Entry
-            </button>
+            >{translateText("Save Payment Entry")}</button>
           </div>
         </form>
       )}
@@ -434,7 +430,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-amber-500/50 rounded-3xl p-5 space-y-3 shadow-xl">
             <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-extrabold text-sm">
               <AlertCircle className="w-5 h-5 shrink-0" />
-              <span>Duplicate Transaction Alert</span>
+              <span>{translateText("Duplicate Transaction Alert")}</span>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
               {duplicateWarning.message}
@@ -444,16 +440,12 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                 type="button"
                 onClick={() => setDuplicateWarning(null)}
                 className="py-2 px-3.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-              >
-                Cancel Entry
-              </button>
+              >{translateText("Cancel Entry")}</button>
               <button
                 type="button"
                 onClick={() => handleRecordSubmit(null as any, true)}
                 className="py-2 px-4 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-600"
-              >
-                Force Save
-              </button>
+              >{translateText("Force Save")}</button>
             </div>
           </div>
         </div>
@@ -465,28 +457,24 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-emerald-500/50 rounded-3xl p-5 space-y-4 shadow-xl">
             <div className="flex items-center gap-2.5 text-emerald-600 dark:text-emerald-400 font-black text-sm">
               <ShieldCheck className="w-6 h-6 shrink-0" />
-              <span>Owner Payment Confirmation</span>
+              <span>{translateText("Owner Payment Confirmation")}</span>
             </div>
             <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1.5 p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <div>Confirm settlement for: <span className="font-bold text-slate-900 dark:text-slate-100">{pendingConfirmationItem.name}</span></div>
-              <div>Amount: <span className="font-black text-emerald-600 dark:text-emerald-400">₹{pendingConfirmationItem.amount.toLocaleString('en-IN')}</span></div>
-              <div className="text-[10px] text-slate-400 pt-1">Only the owner can confirm and complete payment transactions.</div>
+              <div>{translateText("Confirm settlement for:") + " "}<span className="font-bold text-slate-900 dark:text-slate-100">{pendingConfirmationItem.name}</span></div>
+              <div>{translateText("Amount:") + " "}<span className="font-black text-emerald-600 dark:text-emerald-400">₹{pendingConfirmationItem.amount.toLocaleString('en-IN')}</span></div>
+              <div className="text-[10px] text-slate-400 pt-1">{translateText("Only the owner can confirm and complete payment transactions.")}</div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setPendingConfirmationItem(null)}
                 className="py-2 px-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-              >
-                Cancel
-              </button>
+              >{translateText("Cancel")}</button>
               <button
                 type="button"
                 onClick={handleConfirmExecutePayment}
                 className="py-2 px-4 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition"
-              >
-                Confirm Settlement
-              </button>
+              >{translateText("Confirm Settlement")}</button>
             </div>
           </div>
         </div>
@@ -499,13 +487,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
             <h3 className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
               <ArrowDownLeft className="w-4 h-4" />
-              <span>Receivables (Lene Hai)</span>
+              <span>{translateText("Receivables (Lene Hai)")}</span>
             </h3>
             <span className="text-xs font-black text-amber-600 dark:text-amber-400">₹{totalReceivables.toLocaleString('en-IN')}</span>
           </div>
 
           {receivables.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-500">No uncollected customer credit</div>
+            <div className="text-center py-8 text-xs text-slate-500">{translateText("No uncollected customer credit")}</div>
           ) : (
             <div className="space-y-2">
               {receivables.map((r) => {
@@ -522,7 +510,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                       <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{r.customerName}</div>
                       <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
                         <span>{bizName}</span>
-                        {r.dueDate && <span>• Due: {r.dueDate}</span>}
+                        {r.dueDate && <span>{translateText("• Due:") + " "}{r.dueDate}</span>}
                       </div>
                     </div>
 
@@ -536,7 +524,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                           <button
                             onClick={() => sendReminder(r.customerName, r.contact, r.amount - r.paidAmount, 'receivable')}
                             className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
-                            title="Send WhatsApp Reminder"
+                            title={translateText("Send WhatsApp Reminder")}
                           >
                             <MessageSquare className="w-3.5 h-3.5" />
                           </button>
@@ -551,9 +539,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                               })
                             }
                             className="py-1 px-2.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold border border-amber-500/20 hover:bg-amber-500/20"
-                          >
-                            Collect
-                          </button>
+                          >{translateText("Collect")}</button>
                         </>
                       )}
                     </div>
@@ -569,13 +555,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
             <h3 className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
               <ArrowUpRight className="w-4 h-4" />
-              <span>Payables (Dene Hai)</span>
+              <span>{translateText("Payables (Dene Hai)")}</span>
             </h3>
             <span className="text-xs font-black text-purple-600 dark:text-purple-400">₹{totalPayables.toLocaleString('en-IN')}</span>
           </div>
 
           {payables.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-500">No pending payables</div>
+            <div className="text-center py-8 text-xs text-slate-500">{translateText("No pending payables")}</div>
           ) : (
             <div className="space-y-2">
               {payables.map((p) => {
@@ -592,7 +578,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                       <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{p.supplierName}</div>
                       <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
                         <span>{bizName}</span>
-                        {p.dueDate && <span>• Due: {p.dueDate}</span>}
+                        {p.dueDate && <span>{translateText("• Due:") + " "}{p.dueDate}</span>}
                       </div>
                     </div>
 
@@ -612,9 +598,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({ currentBusinessId })
                             })
                           }
                           className="py-1 px-2.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-500/20 hover:bg-emerald-500/20"
-                        >
-                          Settle
-                        </button>
+                        >{translateText("Settle")}</button>
                       )}
                     </div>
                   </div>

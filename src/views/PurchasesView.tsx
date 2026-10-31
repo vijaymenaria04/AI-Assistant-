@@ -1,3 +1,6 @@
+import { localDate } from '../services/localDate';
+import { displayProductName, matchesProductName } from '../services/productNames';
+import { translateText } from '../services/i18n';
 import React, { useEffect, useState } from 'react';
 import { Truck, Plus, Boxes, Building2, Search } from 'lucide-react';
 import { db } from '../services/db';
@@ -14,7 +17,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [targetBusinessId, setTargetBusinessId] = useState<BusinessId>(
-    currentBusinessId === 'personal' ? 'jain-sweets' : currentBusinessId
+    currentBusinessId
   );
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -22,6 +25,8 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
   const [amount, setAmount] = useState('');
   const [supplierName, setSupplierName] = useState('');
   const [paidAmount, setPaidAmount] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const loadPurchases = async () => {
@@ -31,9 +36,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
 
   useEffect(() => {
     setSelectedBusinessId(currentBusinessId);
-    if (currentBusinessId !== 'personal') {
-      setTargetBusinessId(currentBusinessId);
-    }
+    setTargetBusinessId(currentBusinessId);
   }, [currentBusinessId]);
 
   useEffect(() => {
@@ -46,18 +49,18 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
     e.preventDefault();
     const totAmount = parseFloat(amount);
     const qty = parseFloat(quantity);
-    if (!itemName || isNaN(totAmount) || isNaN(qty)) return;
-
-    const paid = paidAmount ? parseFloat(paidAmount) : totAmount;
-
+    const paid = paidAmount.trim() === '' ? NaN : Number(paidAmount);
+    if (!itemName.trim() || !Number.isFinite(totAmount) || totAmount <= 0 || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(paid) || paid < 0 || paid > totAmount) { setFormError('Enter a positive quantity and amount, and a paid amount from zero up to the total.'); return; }
+    if (saving) return; setSaving(true); setFormError('');
+    try {
     await db.addPurchase({
       businessId: targetBusinessId,
       itemName: itemName.trim(),
       quantity: qty,
       unit,
       amount: totAmount,
-      supplierName: supplierName.trim() || 'General Vendor',
-      date: new Date().toISOString().split('T')[0],
+      supplierName: supplierName.trim(),
+      date: localDate(),
       paidAmount: paid
     });
 
@@ -67,13 +70,15 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
     setSupplierName('');
     setPaidAmount('');
     setShowAddForm(false);
+    } catch (error) { setFormError(error instanceof Error ? error.message : 'Could not save purchase.'); }
+    finally { setSaving(false); }
   };
 
   const filteredPurchases = purchases.filter((p) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
-      p.itemName.toLowerCase().includes(q) ||
+      matchesProductName(p.itemName, q) ||
       p.supplierName.toLowerCase().includes(q) ||
       p.businessId.toLowerCase().includes(q)
     );
@@ -87,7 +92,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-extrabold text-blue-600 dark:text-blue-400">{t('stockPurchasesInward')}</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Record inward goods purchased from vendors and suppliers</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{translateText("Record inward goods purchased from vendors and suppliers")}</p>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
@@ -101,18 +106,22 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
       {/* Workspace Selector Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
         {[
-          { id: 'jain-sweets', name: 'Jain Sweets', color: 'text-amber-500' },
-          { id: 'paan-bai', name: 'Paan Bai Canteen', color: 'text-emerald-500' },
-          { id: 'kesarwadi', name: 'Kesarwadi Canteen', color: 'text-orange-500' },
-          { id: 'gopal-caterers', name: 'Gopal Caterers', color: 'text-purple-500' },
-          { id: 'personal', name: 'Personal Wallet', color: 'text-blue-500' },
-          { id: 'all', name: 'All Workspaces', color: 'text-indigo-500' }
+          { id: 'jain-sweets', name: translateText('Jain Sweets'), color: 'text-amber-500' },
+          { id: 'paan-bai', name: translateText('Paan Bai Canteen'), color: 'text-emerald-500' },
+          { id: 'kesarwadi', name: translateText('Kesarwadi Canteen'), color: 'text-orange-500' },
+          { id: 'gopal-caterers', name: translateText('Gopal Caterers'), color: 'text-purple-500' },
+          { id: 'personal', name: translateText('Personal'), color: 'text-blue-500' },
+          { id: 'all', name: translateText('All Workspaces'), color: 'text-indigo-500' }
         ].map((biz) => {
           const isActive = selectedBusinessId === biz.id;
           return (
             <button
               key={biz.id}
-              onClick={() => setSelectedBusinessId(biz.id as any)}
+              onClick={() => {
+                if (biz.id !== selectedBusinessId && showAddForm && !window.confirm(translateText('Change workspace for the open form? Review its target before saving.'))) return;
+                setSelectedBusinessId(biz.id as BusinessId | 'all');
+                if (biz.id !== 'all') setTargetBusinessId(biz.id as BusinessId);
+              }}
               className={`py-2 px-3.5 rounded-xl font-bold text-xs flex items-center gap-2 whitespace-nowrap transition ${
                 isActive
                   ? 'bg-blue-600 text-white shadow'
@@ -133,7 +142,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
           <div className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-0.5">₹{totalPurchases.toLocaleString('en-IN')}</div>
         </div>
         <div className="text-right text-xs text-slate-500 dark:text-slate-400">
-          <div className="font-bold text-slate-800 dark:text-slate-200">{filteredPurchases.length} inward records</div>
+          <div className="font-bold text-slate-800 dark:text-slate-200">{filteredPurchases.length}{" " + translateText("inward records")}</div>
         </div>
       </div>
 
@@ -145,17 +154,17 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Workspace*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Workspace*")}</label>
               <select
                 value={targetBusinessId}
                 onChange={(e) => setTargetBusinessId(e.target.value as BusinessId)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
-                <option value="jain-sweets">Jain Sweets</option>
-                <option value="paan-bai">Paan Bai Canteen</option>
-                <option value="kesarwadi">Kesarwadi Canteen</option>
-                <option value="gopal-caterers">Gopal Caterers</option>
-                <option value="personal">Personal Finance</option>
+                <option value="jain-sweets">{translateText("Jain Sweets")}</option>
+                <option value="paan-bai">{translateText("Paan Bai Canteen")}</option>
+                <option value="kesarwadi">{translateText("Kesarwadi Canteen")}</option>
+                <option value="gopal-caterers">{translateText("Gopal Caterers")}</option>
+                <option value="personal">{translateText("Personal")}</option>
               </select>
             </div>
             <div>
@@ -165,7 +174,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
                 required
                 value={itemName}
                 onChange={(e) => setItemName(e.target.value)}
-                placeholder="e.g. Sugar / Milk / Flour"
+                placeholder={translateText("e.g. Sugar / Milk / Flour")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -176,7 +185,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
                 required
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
-                placeholder="e.g. 50"
+                placeholder={translateText("e.g. 50")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -188,20 +197,20 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               >
                 <option value="kg">kg (Kilograms)</option>
-                <option value="liters">liters</option>
+                <option value="liters">{translateText("liters")}</option>
                 <option value="pcs">pcs (Pieces)</option>
-                <option value="packets">packets</option>
-                <option value="boxes">boxes</option>
+                <option value="packets">{translateText("packets")}</option>
+                <option value="boxes">{translateText("boxes")}</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Total Bill Amount (₹)*</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{translateText("Total Bill Amount (₹)*")}</label>
               <input
                 type="number"
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="e.g. 2200"
+                placeholder={translateText("e.g. 2200")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -211,21 +220,25 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
                 type="text"
                 value={supplierName}
                 onChange={(e) => setSupplierName(e.target.value)}
-                placeholder="e.g. Ramesh Traders"
+                placeholder={translateText("e.g. Ramesh Traders")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{t('paidAmountRupees')}</label>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">{t('paidAmountRupees')}*</label>
               <input
                 type="number"
+                required
+                min="0"
+                step="any"
                 value={paidAmount}
                 onChange={(e) => setPaidAmount(e.target.value)}
-                placeholder="Leave empty if fully paid"
+                placeholder={translateText("Enter amount paid (0 if unpaid)")}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
               />
             </div>
           </div>
+          {formError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{formError}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
@@ -236,6 +249,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
             </button>
             <button
               type="submit"
+              disabled={saving}
               className="py-2 px-4 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold text-xs hover:brightness-110"
             >
               {t('savePurchaseStock')}
@@ -251,7 +265,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search purchases by item or supplier..."
+          placeholder={translateText("Search purchases by item or supplier...")}
           className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
         />
       </div>
@@ -262,7 +276,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
           <div className="p-10 text-center rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-2 shadow-sm">
             <Truck className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto" />
             <div className="text-sm font-semibold text-slate-800 dark:text-slate-300">{t('noPurchasesYet')}</div>
-            <p className="text-xs text-slate-500">Record inventory purchases to automatically update stock.</p>
+            <p className="text-xs text-slate-500">{translateText("Record inventory purchases to automatically update stock.")}</p>
           </div>
         ) : (
           filteredPurchases.map((p) => {
@@ -271,7 +285,7 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
               <div key={p.id} className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-sm">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{p.itemName}</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{displayProductName(p.itemName)}</span>
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
                       {p.quantity} {p.unit}
                     </span>
@@ -279,14 +293,13 @@ export const PurchasesView: React.FC<PurchasesViewProps> = ({ currentBusinessId 
                       {bizInfo?.name}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Supplier: {p.supplierName} • Date: {p.date}
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{translateText("Supplier:") + " "}{p.supplierName}{" " + translateText("• Date:") + " "}{p.date}
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-extrabold text-blue-600 dark:text-blue-400">₹{p.amount.toLocaleString('en-IN')}</div>
                   {p.pendingAmount > 0 && (
-                    <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">Due: ₹{p.pendingAmount.toLocaleString('en-IN')}</div>
+                    <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">{translateText("Due: ₹")}{p.pendingAmount.toLocaleString('en-IN')}</div>
                   )}
                 </div>
               </div>
